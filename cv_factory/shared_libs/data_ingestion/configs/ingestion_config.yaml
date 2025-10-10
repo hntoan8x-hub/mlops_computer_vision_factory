@@ -1,0 +1,32 @@
+# Ví dụ về file cấu hình cho quá trình ingestion
+# File này sẽ được tải và xác thực bằng Pydantic.
+sources:
+  - type: "image"
+    params:
+      source: "/path/to/local/image_folder"
+      use_pillow: true
+
+  - type: "video"
+    params:
+      source: "/path/to/local/video.mp4"
+      frame_skip: 5
+
+  - type: "dicom"
+    params:
+      source: "s3://my-medical-bucket/patient_scans/"
+      anonymize: true
+
+  - type: "api"
+    params:
+      source: "https://api.example.com/v1/images/123"
+      headers:
+        Authorization: "Bearer your_token"
+
+  - type: "camera"
+    params:
+      source: 0 # 0 for default webcam, or a URL for RTSP stream
+
+  - type: "kafka"
+    params:
+      bootstrap_servers: ["broker1:9092", "broker2:9092"]
+      topic: "realtime_camera_feed"

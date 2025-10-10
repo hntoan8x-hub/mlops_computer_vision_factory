@@ -1,0 +1,9 @@
+steps:
+  - type: "cnn"
+    params:
+      model_name: "resnet50"
+      pretrained: true
+  - type: "hog"
+    params:
+      win_size: [64, 64]
+      block_size: [16, 16]

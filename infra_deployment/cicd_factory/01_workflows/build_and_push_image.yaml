@@ -1,0 +1,56 @@
+# infra_deployment/cicd_factory/01_workflows/build_and_push_image.yaml
+name: Build and Push Docker Images
+on:
+  workflow_call:
+    inputs:
+      image_tag: { required: true, type: string }
+      ecr_registry: { required: true, type: string }
+    secrets:
+      DOCKER_USERNAME: { required: false } # Optional for ECR/GCR, but required for Docker Hub
+      DOCKER_PASSWORD: { required: false }
+      AWS_ACCESS_KEY_ID: { required: true }
+      AWS_SECRET_ACCESS_KEY: { required: true }
+      AWS_REGION: { required: true }
+    outputs:
+      inference_image:
+        description: "Full URI of the pushed inference image."
+        value: ${{ jobs.build_push.outputs.inference_image_uri }}
+
+jobs:
+  build_push:
+    runs-on: ubuntu-latest
+    outputs:
+      inference_image_uri: ${{ steps.push_inference.outputs.image_uri }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # 1. Build and push inference Docker image
+      - name: Build and Push Inference Image
+        id: push_inference
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: infra/docker/inference.Dockerfile
+          push: true
+          tags: ${{ inputs.ecr_registry }}/cv-inference:${{ inputs.image_tag }}
+          outputs: "type=image,name=${{ inputs.ecr_registry }}/cv-inference:${{ inputs.image_tag }},push-by-digest=true"
+
+      # 2. Build and push trainer Docker image
+      - name: Build and Push Trainer Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: infra/docker/trainer.Dockerfile
+          push: true
+          tags: ${{ inputs.ecr_registry }}/cv-trainer:${{ inputs.image_tag }}

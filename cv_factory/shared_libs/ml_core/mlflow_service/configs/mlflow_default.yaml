@@ -1,0 +1,7 @@
+tracking_uri: "http://localhost:5000"
+tracker:
+  type: "mlflow"
+  params: {}
+registry:
+  type: "mlflow"
+  params: {}

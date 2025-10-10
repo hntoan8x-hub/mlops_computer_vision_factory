@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "cv-inference-metrics"
+    static_configs:
+      - targets: ["cv-inference-service:8000"] # Assuming your inference service exposes metrics on this port
+    metrics_path: "/metrics"
+
+  - job_name: "cv-monitoring-exporters"
+    static_configs:
+      - targets: ["data-drift-exporter:8001", "model-metrics-exporter:8002"]
+    metrics_path: "/metrics"

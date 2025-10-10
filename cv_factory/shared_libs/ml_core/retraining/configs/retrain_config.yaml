@@ -1,0 +1,23 @@
+triggers:
+  - type: "time"
+    params:
+      interval_days: 7
+      last_retrain_time: "2024-09-01T00:00:00"
+  - type: "performance"
+    params:
+      metric_name: "accuracy"
+      metric_threshold: 0.85
+      mode: "max"
+  - type: "drift"
+    params:
+      drift_threshold: 0.1
+      drift_type: "data"
+
+notification:
+  slack_webhook_url: "https://hooks.slack.com/services/..."
+
+job_config:
+  training_config_path: "configs/training/model_a.yaml"
+  params:
+    job_type: "kubernetes"
+    image: "my-custom-ml-image:v1.2"

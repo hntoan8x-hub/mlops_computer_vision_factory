@@ -1,0 +1,57 @@
+# infra_deployment/cicd_factory/01_workflows/run_tf_apply.yaml
+name: Run Terraform Apply (IaC Automation)
+on:
+  workflow_call:
+    inputs:
+      environment: { required: true, type: string }
+      working_directory: { required: true, type: string }
+    secrets:
+      AWS_ACCESS_KEY_ID: { required: true }
+      AWS_SECRET_ACCESS_KEY: { required: true }
+      AWS_REGION: { required: true }
+      TF_BACKEND_S3_BUCKET: { required: true }
+      DB_PASSWORD: { required: true } # Sensitive DB input for RDS module
+
+jobs:
+  terraform_execution:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      # CRITICAL STEP 1: Initialization (Configures S3 Backend State)
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_S3_BUCKET }}" \
+            -backend-config="key=${{ inputs.working_directory }}/${{ inputs.environment }}.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+        working-directory: ${{ inputs.working_directory }}
+
+      # CRITICAL STEP 2: Validation and Plan
+      - name: Terraform Plan
+        # Load environment-specific variables from .tfvars file
+        run: |
+          terraform plan \
+            -var-file=envs/${{ inputs.environment }}.tfvars \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \ # Inject sensitive data via environment variables
+            -out=tfplan
+        working-directory: ${{ inputs.working_directory }}
+
+      # CRITICAL STEP 3: Execution
+      - name: Terraform Apply
+        # Apply changes, often protected by manual approval in Prod
+        run: terraform apply -auto-approve tfplan
+        working-directory: ${{ inputs.working_directory }}

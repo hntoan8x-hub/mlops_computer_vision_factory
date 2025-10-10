@@ -1,0 +1,68 @@
+# config/medical_inference_config.yaml (API & Batch Scoring)
+
+# --- GLOBAL METADATA ---
+run_metadata:
+  git_sha: "HJK789LMN012"
+  config_hash: "CFG123XYZ456"
+  project_name: "medical_imaging_inference"
+
+# --- 1. PIPELINE TYPE (Used by CVPipelineFactory) ---
+pipeline_type: inference
+
+# --- 2. DATA INGESTION (Input/Output Connector Setup for Batch Jobs) ---
+data_ingestion:
+  enabled: True
+  connector_config:
+    type: image
+    uri: "s3://cv-inference-input-bucket/daily_scans/"
+    connection_params:
+      region: "us-west-2"
+      max_retries: 3
+
+  # For Batch Inference: specify where results are written
+  output_uri: "s3://cv-inference-output-bucket/predictions/{{ ds }}/"
+
+# --- 3. PREPROCESSING (CRITICAL: Must match training cleaning/feature steps) ---
+preprocessing:
+  enabled: True
+
+  # CLEANING: Mandatory steps applied to input images (No augmentation)
+  cleaning:
+    steps:
+      - type: resizer
+        params:
+          width: 224
+          height: 224
+      - type: normalizer
+        params:
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]
+
+  # FEATURE ENGINEERING: Must match training feature engineering
+  feature_engineering:
+    components:
+      - type: cnn_embedder
+        params:
+          model_name: "resnet18"
+          pretrained: False # Pretrained weights are irrelevant for inference mode here
+          remove_head: True
+
+# --- 4. MODEL CONFIGURATION ---
+model:
+  enabled: True
+  type: "cnn"
+  # CRITICAL: URI to the model version to load from MLflow Registry
+  uri: "models:/lung_disease_classifier/Production"
+  name: "lung_disease_classifier"
+  device: "cuda:0" # Inference device
+
+# --- 5. DOMAIN/POSTPROCESSING (Used by CVPipelineFactory for Dynamic Import) ---
+domain:
+  type: medical
+  postprocessor:
+    module_path: "domain_models.medical_imaging.postprocessor.medical_postprocessor"
+    class_name: "MedicalPostprocessor"
+    params:
+      # Threshold used by the MedicalPostprocessor.run() logic
+      confidence_threshold: 0.85
+      fhir_enabled: True

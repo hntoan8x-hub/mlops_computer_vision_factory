@@ -1,0 +1,35 @@
+{
+  "title": "CV Factory Monitoring Dashboard",
+  "panels": [
+    {
+      "title": "Model Latency",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(pipeline_step_latency_seconds_bucket{component_type='inference', step_name='predict'}[5m]))",
+          "legendFormat": "P99 Latency"
+        }
+      ]
+    },
+    {
+      "title": "Model Accuracy",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "last_over_time(model_accuracy_gauge[5m])",
+          "legendFormat": "Accuracy"
+        }
+      ]
+    },
+    {
+      "title": "Data Drift Score",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "data_drift_psi_gauge",
+          "legendFormat": "PSI Score"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+# config/medical_retrain_config.yaml
+
+# --- 1. PIPELINE TYPE (Not strictly needed, but kept for schema consistency) ---
+pipeline_type: retraining
+
+# --- 2. TRIGGERS (Decision Logic: WHEN to retrain) ---
+triggers:
+  - type: time # Tái huấn luyện định kỳ
+    params:
+      interval_days: 14 # Cứ 14 ngày kiểm tra
+      last_retrain_time: "2025-09-01T00:00:00" # ISO format
+
+  - type: drift # Kích hoạt dựa trên báo cáo Drift
+    params:
+      drift_threshold: 0.15 # Ngưỡng KL Divergence cao hơn (lý do mạnh hơn)
+      drift_type: "prediction" # Chỉ quan tâm đến Prediction Drift
+
+  - type: performance # Kích hoạt dựa trên hiệu suất (suy giảm)
+    params:
+      metric_name: "f1_score"
+      metric_threshold: 0.80 # Tái huấn luyện nếu F1 Score < 0.80
+      mode: "max" # Cần điểm cao hơn ngưỡng
+
+# --- 3. JOB CONFIG (WHAT and HOW to submit the training job) ---
+job_config:
+  # Path tới cấu hình TRAINING được sử dụng để khởi chạy lại (Re-use)
+  training_config_path: "./config/medical_training_config.yaml"
+
+  # Cấu hình cho job submission (sử dụng job_utils.py)
+  params:
+    job_type: "kubernetes" # Gửi Job tới Kubernetes
+    resource_request: "gpu:1"
+    namespace: "mlops-training"
+
+# --- 4. NOTIFICATION (Alert when a new job is submitted) ---
+notification:
+  slack_webhook_url: "https://hooks.slack.com/services/T000/B000_retrain_notify"

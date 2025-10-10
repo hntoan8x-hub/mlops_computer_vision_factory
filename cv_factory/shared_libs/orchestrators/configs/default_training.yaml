@@ -1,0 +1,30 @@
+type: training
+pipeline:
+  data_ingestion:
+    sources:
+      - type: "image"
+        params:
+          source: "./data/train_images/"
+  preprocessing:
+    pipeline:
+      - type: "resizer"
+        params:
+          width: 224
+          height: 224
+      - type: "normalizer"
+        params:
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]
+  model:
+    name: "resnet18"
+    pretrained: true
+  trainer:
+    type: "cnn"
+    params:
+      epochs: 20
+      learning_rate: 0.001
+  evaluator:
+    type: "evaluation_orchestrator"
+    params:
+      task_type: "classification"
+      metrics: ["accuracy", "f1_score"]

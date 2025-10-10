@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cv-batch-inference
+spec:
+  template:
+    spec:
+      containers:
+        - name: batch-inference-container
+          image: your-docker-registry/cv-inference:latest
+          command: ["python", "main_batch_inference_script.py"]
+          args:
+            - "--input-path"
+            - "/data/batch_input/"
+            - "--output-path"
+            - "/data/batch_output/"
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "4Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+          volumeMounts:
+            - name: data-volume
+              mountPath: /data
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: shared-data-pvc
+      restartPolicy: OnFailure

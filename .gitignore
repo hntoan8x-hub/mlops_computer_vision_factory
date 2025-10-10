@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+.idea/
+
+# Editor files
+.vscode/
+
+# Project files
+.DS_Store
+*.log
+*.sqlite
+*.db
+*.bin
+*.pt
+
+# Data files
+data/
+outputs/
+logs/
+checkpoints/
+
+# MLflow
+mlruns/

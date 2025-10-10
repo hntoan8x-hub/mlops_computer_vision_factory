@@ -1,0 +1,66 @@
+# infra_deployment/cicd_factory/02_project_flows/cv_training_pipeline.yaml
+name: CV Factory Training & Deployment Flow
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ENVIRONMENT: staging # Default deployment target
+  # NOTE: Critical configuration values (e.g., project name) should be set as repo variables or imported
+
+jobs:
+  # 1. QUALITY_GATE: Ensure code quality and configuration integrity
+  quality_gate:
+    uses: ./01_workflows/run_quality_gates.yaml
+    with:
+      python_version: "3.10"
+
+  # 2. CONTAINERIZATION: Build and push images
+  build:
+    needs: quality_gate
+    uses: ./01_workflows/build_and_push_image.yaml
+    with:
+      image_tag: ${{ github.sha }}
+      ecr_registry: ${{ secrets.ECR_REGISTRY_URL }}
+    secrets: inherit # Inherit AWS/Docker secrets
+
+  # 3. PROVISION_INFRA: Create/Update the Cloud Environment (RDS, S3, IAM, Network)
+  provision_infra:
+    needs: build
+    uses: ./01_workflows/run_tf_apply.yaml
+    with:
+      environment: ${{ env.ENVIRONMENT }}
+      # Point to the specific project template directory
+      working_directory: 02_application_templates/project_cv_factory
+    secrets: inherit # Inherit AWS/DB_PASSWORD secrets
+
+  # 4. RUN_TRAINING_JOB: Execute the MLOps Training Workflow
+  train_and_register:
+    needs: provision_infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Install Project Dependencies
+        run: pip install -r requirements.txt && pip install mlflow[extras]
+
+      # CRITICAL: This is where the Python Orchestrator is called
+      # The script loads the config, finds the newly provisioned infra endpoints (from Terraform outputs),
+      # and runs CVTrainingOrchestrator.run() using the built trainer Docker image.
+      - name: Execute CV Training Run
+        run: python scripts/run_mlops_training.py --config configs/training_pipeline_config.yaml --env ${{ env.ENVIRONMENT }}
+
+  # 5. DEPLOY_ENDPOINT: Deploy the newly registered model version
+  deploy_endpoint:
+    needs: train_and_register
+    runs-on: ubuntu-latest
+    # NOTE: This step should call the logic inside the Cloud Adapter (aws_sagemaker_deploy.py)
+    steps:
+      - name: Deploy New Model to SageMaker
+        run: python infra/cloud/aws_sagemaker_deploy.py --promote-model-version ${{ needs.train_and_register.outputs.model_version }}

@@ -1,0 +1,47 @@
+# config/medical_monitoring_config.yaml
+
+# --- 1. PIPELINE TYPE (Not strictly needed, but kept for schema consistency) ---
+pipeline_type: monitoring
+
+# --- 2. MONITORS (List of checks to run against production data) ---
+monitors:
+  - type: prediction_drift
+    params:
+      drift_threshold: 0.1 # Max KL Divergence allowed
+      check_method: "kl_divergence"
+      # Data source for drift comparison (e.g., last month's production data)
+      reference_data_uri: "s3://cv-monitoring-baseline/preds_baseline.parquet"
+
+  - type: metric # Check model quality degradation (requires ground truth data)
+    params:
+      metric_name: "accuracy"
+      threshold: 0.90 # Alert if accuracy drops below 90%
+      mode: "max" # We want the score to be MAXIMUM
+
+  - type: latency
+    params:
+      latency_threshold_ms: 150 # Alert if average inference time exceeds 150ms
+
+# --- 3. REPORTERS (Where to send the results/alerts) ---
+reporters:
+  - type: log # Logs detailed report to the job console
+    params:
+      logger_name: "mlops_monitor_reports"
+
+  - type: prometheus # Push metrics for Grafana visualization
+    params:
+      gateway_url: "http://prometheus-pushgateway:9091"
+      job_name: "medical_inference_metrics"
+
+  - type: alert # Sends external notifications if a monitor status is ALERT
+    # NOTE: AlertReporter will automatically inherit the AlertConfig below
+    params: {}
+
+# --- 4. ALERTS (Global Alert Configuration) ---
+alerts:
+  slack_webhook_url: "https://hooks.slack.com/services/T000/B000"
+  email_recipients: ["mlops-alerts@yourcompany.com"]
+
+# --- 5. SCHEDULING (Metadata for Airflow/Cron) ---
+scheduling:
+  cron_expression: "0 * * * *" # Run every hour

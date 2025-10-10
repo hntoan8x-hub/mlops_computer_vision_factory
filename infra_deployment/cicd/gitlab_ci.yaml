@@ -1,0 +1,53 @@
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_IMAGE_TRAINER: your-gitlab-registry/$CI_PROJECT_NAME/cv-trainer
+  DOCKER_IMAGE_INFERENCE: your-gitlab-registry/$CI_PROJECT_NAME/cv-inference
+  DOCKER_IMAGE_MONITORING: your-gitlab-registry/$CI_PROJECT_NAME/cv-monitoring
+
+test:
+  stage: test
+  image: python:3.10
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $DOCKER_IMAGE_TRAINER:$CI_COMMIT_SHORT_SHA -f infra/docker/trainer.Dockerfile .
+    - docker push $DOCKER_IMAGE_TRAINER:$CI_COMMIT_SHORT_SHA
+    - docker build -t $DOCKER_IMAGE_INFERENCE:$CI_COMMIT_SHORT_SHA -f infra/docker/inference.Dockerfile .
+    - docker push $DOCKER_IMAGE_INFERENCE:$CI_COMMIT_SHORT_SHA
+    - docker build -t $DOCKER_IMAGE_MONITORING:$CI_COMMIT_SHORT_SHA -f infra/docker/monitoring.Dockerfile .
+    - docker push $DOCKER_IMAGE_MONITORING:$CI_COMMIT_SHORT_SHA
+
+deploy:
+  stage: deploy
+  image: dind
+  before_script:
+    - apk add openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - eval "$(ssh-agent -s)"
+    - ssh-add ~/.ssh/id_rsa
+    - ssh-keyscan -H $KUBE_HOST >> ~/.ssh/known_hosts
+  script:
+    - export KUBE_CONFIG_FILE=$KUBE_CONFIG_PATH
+    - kubectl config set-cluster default --server=$KUBE_SERVER --insecure-skip-tls-verify=true
+    - kubectl config set-context default --cluster=default --user=gitlab-user
+    - kubectl config set-credentials gitlab-user --token=$KUBE_TOKEN
+    - kubectl config use-context default
+    - kubectl apply -f infra/k8s/cv-inference-deployment.yaml
+    - kubectl rollout restart deployment cv-inference-deployment
+
+  only:
+    - main

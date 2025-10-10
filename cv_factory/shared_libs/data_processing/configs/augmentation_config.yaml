@@ -1,0 +1,9 @@
+steps:
+  - type: "flip_rotate"
+    params:
+      horizontal_flip: 0.5
+      rotate_angle: 30
+  - type: "noise_injection"
+    params:
+      std_dev: 15.0
+      probability: 0.3

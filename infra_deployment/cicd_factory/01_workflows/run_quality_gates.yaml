@@ -1,0 +1,41 @@
+# infra_deployment/cicd_factory/01_workflows/run_quality_gates.yaml
+name: Quality Gates (Linting & Schema Validation)
+on:
+  workflow_call:
+    inputs:
+      python_version: { required: true, type: string, default: "3.10" }
+
+jobs:
+  quality_check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install Testing and Pydantic Dependencies
+        # Install dependencies for the project and necessary testing/linting tools
+        run: pip install -r requirements.txt && pip install pytest black flake8 pydantic
+
+      # 1. Code Formatting Check (Black)
+      - name: Enforce Code Formatting
+        run: black --check .
+
+      # 2. Static Analysis (Flake8)
+      - name: Run Static Analysis
+        run: flake8 .
+
+      # 3. Unit and Integration Tests
+      - name: Run Pytest
+        run: pytest tests/
+
+      # 4. CRITICAL: Validate All Pydantic Config Schemas (Architectural Integrity Check)
+      - name: Validate All Configuration Schemas
+        # This script must dynamically load project YAMLs (e.g., from configs/)
+        # and validate them against the master OrchestratorConfig schema.
+        run: python scripts/validate_factory_configs.py
+        # Note: We assume 'scripts/validate_factory_configs.py' handles the Pydantic check using ConfigManager.

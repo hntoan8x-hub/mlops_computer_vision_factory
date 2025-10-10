@@ -1,0 +1,14 @@
+vector_store:
+  type: "faiss"
+  params:
+    dim: 768 # Example dimension, matches common models like ViT
+    index_path: "./data/faiss_index.bin"
+
+retriever:
+  type: "dense"
+  params:
+    top_k: 10
+    # For a hybrid retriever, you would configure it like this:
+    # type: "hybrid"
+    # params:
+    #   alpha: 0.5

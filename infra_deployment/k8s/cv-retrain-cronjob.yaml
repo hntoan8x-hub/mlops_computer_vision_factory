@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cv-retrain-cronjob
+spec:
+  schedule: "0 0 * * *" # Run once a day at midnight
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: retrain-trigger
+              image: your-docker-registry/cv-trainer:latest
+              command: ["python", "main_retraining_script.py"]
+              args: ["--config-path", "/app/configs/retrain_config.yaml"]
+              # Mount a volume to access configs and data
+              volumeMounts:
+                - name: configs-volume
+                  mountPath: /app/configs
+                - name: data-volume
+                  mountPath: /data
+          volumes:
+            - name: configs-volume
+              configMap:
+                name: retrain-config-map
+            - name: data-volume
+              persistentVolumeClaim:
+                claimName: shared-data-pvc
+          restartPolicy: OnFailure

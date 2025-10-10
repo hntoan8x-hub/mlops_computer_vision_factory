@@ -1,0 +1,47 @@
+monitors:
+  # Cấu hình cho Feature Drift Monitor
+  - type: "feature_drift"
+    params:
+      drift_threshold: 0.15
+      check_method: "psi"
+      features_to_monitor: ["age", "income", "loan_amount"]
+
+  # Cấu hình cho Metric Performance Monitor
+  - type: "metric"
+    params:
+      metric_name: "f1_score"
+      threshold: 0.75
+      mode: "max"
+
+  # Cấu hình cho Latency Monitor
+  - type: "latency"
+    params:
+      latency_threshold_ms: 200
+
+  # Cấu hình cho Fairness Monitor
+  - type: "fairness"
+    params:
+      group_column: "gender"
+      metric_name: "accuracy"
+      bias_threshold: 0.05
+
+reporters:
+  # Reporter để xuất metrics ra Prometheus
+  - type: "prometheus"
+    params:
+      gateway_url: "http://prometheus-pushgateway.com:9091"
+      job_name: "loan_model_monitor"
+
+  # Reporter để log báo cáo
+  - type: "log"
+    params: {}
+
+alerts:
+  # Cấu hình để gửi cảnh báo đến Slack
+  slack_webhook_url: "https://hooks.slack.com/services/..."
+  # Cấu hình để gửi cảnh báo qua email
+  email_recipients: ["data.scientist@example.com", "ml.engineer@example.com"]
+
+scheduling:
+  # Tần suất chạy job monitoring
+  cron_expression: "0 * * * *" # Chạy mỗi giờ

@@ -1,0 +1,133 @@
+name: CI/CD Pipeline for CV Factory
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # -----------------------------------------------
+  # 1. QUALITY_CHECKS: Static Analysis and Schema Validation
+  # -----------------------------------------------
+  quality_checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Linting & Schema Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install black flake8 pydantic
+
+      - name: Code Formatting Check (Black)
+        run: black --check .
+
+      - name: Static Analysis (Flake8)
+        run: flake8 .
+
+      # Tích hợp Pydantic Schema Validation
+      # Mục tiêu: Đảm bảo tất cả các file config YAML tuân thủ các schema Pydantic đã định nghĩa
+      - name: Validate Configuration Schemas
+        run: |
+          # Giả định một script run_schema_validation.py tồn tại để chạy tất cả các schema_*_schema.py 
+          # đối chiếu với các file config YAML tương ứng.
+          # (Ví dụ: ml_core/configs/trainer_config_schema.py vs domain_models/*/training_config.yaml)
+          python scripts/run_schema_validation.py
+        # Cần tạo file scripts/run_schema_validation.py để thực thi logic này
+
+  # -----------------------------------------------
+  # 2. UNIT_TESTING_AND_SMOKE_TEST: Logic and Model Quality Check
+  # -----------------------------------------------
+  testing_and_model_gate:
+    needs: quality_checks # Yêu cầu Stage 1 hoàn tất
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Unit and Integration Tests
+        run: pytest tests/
+
+      # GATE KIỂM TRA CHẤT LƯỢNG MÔ HÌNH (MODEL QUALITY GATE)
+      # Mục tiêu: Chạy một bài test nhanh (smoke test) huấn luyện trên dữ liệu nhỏ
+      # và kiểm tra xem mô hình có đạt được ngưỡng metric tối thiểu không (ví dụ: Accuracy > 70%).
+      - name: Model Quality Smoke Test
+        run: |
+          # Giả định scripts/run_model_smoke_test.py chạy logic sau:
+          # 1. Tải một dataset mẫu nhỏ.
+          # 2. Gọi cv_training_orchestrator.py với cấu hình tối thiểu (1 epoch).
+          # 3. Chạy evaluation và kiểm tra metrics (ví dụ: assert metrics['accuracy'] > 0.70).
+          python scripts/run_model_smoke_test.py --domain medical_imaging
+  # -----------------------------------------------
+  # 3. BUILD_AND_DEPLOY: Docker Build and Deployment
+  # -----------------------------------------------
+  build_and_deploy:
+    needs: testing_and_model_gate # Yêu cầu Stage 2 hoàn tất
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest tests/
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push trainer Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: infra/docker/trainer.Dockerfile
+          push: true
+          tags: |
+            your-docker-username/cv-trainer:latest
+            your-docker-username/cv-trainer:${{ github.sha }}
+
+      - name: Build and push inference Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: infra/docker/inference.Dockerfile
+          push: true
+          tags: |
+            your-docker-username/cv-inference:latest
+            your-docker-username/cv-inference:${{ github.sha }}
+
+      - name: Deploy to Kubernetes
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.K8S_HOST }}
+          username: ${{ secrets.K8S_USERNAME }}
+          key: ${{ secrets.K8S_KEY }}
+          script: |
+            kubectl apply -f infra/k8s/cv-inference-deployment.yaml
+            kubectl rollout restart deployment cv-inference-deployment

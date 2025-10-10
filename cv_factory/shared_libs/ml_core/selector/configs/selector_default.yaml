@@ -1,0 +1,17 @@
+# Cấu hình cho một MetricBasedSelector
+selector:
+  type: "metric_based"
+  params:
+    metric_name: "accuracy"
+    mode: "max"
+# Cấu hình cho một RuleBasedSelector
+# selector:
+#   type: "rule_based"
+#   params:
+#     rules:
+#       - metric: "f1_score"
+#         op: ">="
+#         value: 0.85
+#       - metric: "latency_ms"
+#         op: "<="
+#         value: 100
