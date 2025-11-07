@@ -111,19 +111,34 @@ Image → Detection → Crop → Classification → Segmentation → Merge → D
 
 ## 🧱 VI. **System Maturity & Production Capabilities**
 
-| Capability                                        | Status         |
-| ------------------------------------------------- | -------------- |
-| Modular Design (Separation & Reusability)         | ✅             |
-| Config Schema Validation (Pydantic v2)            | ✅             |
-| Model Lifecycle: Train → Deploy → Serve → Retrain | ✅             |
-| Multi-Usecase Orchestration                       | ✅             |
-| Canary / Rollback / Blue-Green Deployment         | ⚙️ In progress |
-| Monitoring + Retraining Feedback Loop             | 🔜 Next phase  |
+| Capability                                        | Status |
+| ------------------------------------------------- | ------ |
+| Modular Design (Separation & Reusability)         | ✅     |
+| Config Schema Validation (Pydantic v2)            | ✅     |
+| Model Lifecycle: Train → Deploy → Serve → Retrain | ✅     |
+| Multi-Usecase Orchestration                       | ✅     |
+| Canary / Rollback / Blue-Green Deployment         | ✅     |
+| Monitoring + Retraining Feedback Loop             | ✅     |
+
+---
+
+## ⚙️ VII. **Orchestration & Automation Scripts (CI/CD + Monitoring Layer)**
+
+| Script                      | Function                                                                           | Trigger / Context                         |
+| --------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------- |
+| `run_training_job.py`       | Main entry point for end-to-end training → evaluation → registration → deployment. | CI/CD Pipeline (Stage 1)                  |
+| `deploy_standard.py`        | Standard deployment to Staging/Production environment.                             | After model registration (Stage 2)        |
+| `run_canary_rollout.py`     | Gradual rollout of new models for limited traffic testing.                         | CI/CD Pipeline (Stage 3)                  |
+| `rollback_deployment.py`    | Automatic or manual rollback in case of model health failure.                      | Triggered by monitoring or manual command |
+| `check_model_health.py`     | Evaluate deployed model performance using production data.                         | Scheduled Cron / Airflow Job              |
+| `monitor_service_health.py` | Continuously monitor model serving endpoints (latency, throughput, error rate).    | Prometheus / Grafana integration          |
+| `cleanup_artifacts.py`      | Clean old artifacts, logs, checkpoints, and temporary files.                       | Nightly cron job / Airflow cleanup DAG    |
+| `run_load_test.py`          | Load test API endpoints before production rollout.                                 | Pre-deployment validation                 |
 
 ---
 
 **📘 Summary:**
 
 > The CV Factory system is now a **full-lifecycle AI Vision platform**, not a demo project.  
-> It supports training, deployment, and domain orchestration (SADS) at an enterprise-grade level,  
+> It supports training, deployment, monitoring, and domain orchestration (SADS) at an enterprise-grade level,  
 > comparable to modern MLOps platforms like **AWS SageMaker, Vertex AI, and Azure ML**.
