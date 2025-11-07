@@ -1,31 +1,29 @@
 # cv_factory/shared_libs/ml_core/evaluator/factories/metric_factory.py
 
 import logging
-from typing import Dict, Any, Type, Union
-
-# Import Base Abstraction
+from typing import Dict, Any, Type, Optional
 from ..base.base_metric import BaseMetric
 
-# Import Concrete Classification Metrics
+# Import Metrics cho Classification
 from ..metrics.classification_metrics import AccuracyMetric, F1ScoreMetric
-
-# Import Concrete Detection Metrics
+# Import Metrics cho Detection
 from ..metrics.detection_metrics import mAPMetric
-
-# Import Concrete Segmentation Metrics (assuming future implementation)
-# from ..metrics.segmentation_metrics import IoUMetric, DiceCoefficientMetric 
+# Import Metrics cho Segmentation
+from ..metrics.segmentation_metrics import DiceCoefficientMetric, MeanIoUMetric
+# Import Metrics cho OCR
+from ..metrics.ocr_metrics import CharacterErrorRateMetric # Giả định file này chứa CER/WER
+# Import Metrics cho Embedding
+from ..metrics.embedding_metrics import RecallAtKMetric
 
 logger = logging.getLogger(__name__)
 
 class MetricFactory:
     """
-    Factory class responsible for creating concrete instances of BaseMetric.
-    
-    This centralizes the instantiation of all stateful evaluation metrics used 
-    throughout the CV pipeline (training, evaluation, and monitoring).
+    Factory class quản lý việc tạo ra các Metric có trạng thái (Stateful Metrics) 
+    dựa trên tên metric.
     """
     
-    # Mapping of metric names to their concrete class implementations
+    # Ánh xạ tên metric (string) sang Metric Class
     METRIC_MAPPING: Dict[str, Type[BaseMetric]] = {
         # Classification
         "accuracy": AccuracyMetric,
@@ -34,47 +32,40 @@ class MetricFactory:
         # Detection
         "map": mAPMetric,
         
-        # Segmentation (Placeholders)
-        # "iou_seg": IoUMetric,
-        # "dice": DiceCoefficientMetric,
+        # Segmentation
+        "dice_coefficient": DiceCoefficientMetric,
+        "mean_iou": MeanIoUMetric,
+        
+        # OCR
+        "cer": CharacterErrorRateMetric,
+        # "wer": WordErrorRateMetric, # Thêm vào nếu có
+        
+        # Embedding/Retrieval
+        "recall@k": RecallAtKMetric,
     }
 
     @staticmethod
-    def get_metric(metric_name: str, config: Union[Dict[str, Any], None] = None) -> BaseMetric:
+    def get_metric(metric_name: str, config: Optional[Dict[str, Any]] = None) -> BaseMetric:
         """
-        Creates and returns a concrete stateful metric instance.
+        Tạo và trả về một Metric instance.
 
         Args:
-            metric_name (str): The name of the metric to create (e.g., 'accuracy', 'map').
-            config (Dict[str, Any], optional): Configuration dictionary specific to the metric 
-                                               (e.g., IoU thresholds for mAP, average type for F1).
+            metric_name (str): Tên của metric cần khởi tạo (ví dụ: 'mAP', 'accuracy').
+            config (Optional[Dict[str, Any]]): Cấu hình cho metric (ví dụ: 'iou_thresholds', 'K').
 
         Returns:
-            BaseMetric: An instance of the requested concrete metric class.
-
-        Raises:
-            ValueError: If the metric_name is not supported.
-            RuntimeError: If instantiation fails.
+            BaseMetric: Một instance của Metric class tương ứng.
         """
         metric_name = metric_name.lower()
-        config = config if config is not None else {}
-        
         if metric_name not in MetricFactory.METRIC_MAPPING:
-            raise ValueError(
-                f"Unsupported metric type: '{metric_name}'. "
-                f"Available metrics are: {list(MetricFactory.METRIC_MAPPING.keys())}"
-            )
-            
+            raise ValueError(f"Unsupported metric name: '{metric_name}'. "
+                             f"Available metrics: {list(MetricFactory.METRIC_MAPPING.keys())}")
+
         MetricClass = MetricFactory.METRIC_MAPPING[metric_name]
         
         try:
-            # Instantiate the metric, passing name and configuration
-            metric = MetricClass(
-                name=metric_name,
-                config=config
-            )
-            logger.info(f"Successfully created stateful metric: {metric_name}")
-            return metric
+            # Khởi tạo metric, truyền tên và config
+            return MetricClass(name=metric_name, config=config)
         except Exception as e:
-            logger.error(f"Failed to instantiate metric '{metric_name}': {e}")
-            raise RuntimeError(f"Metric creation failed for '{metric_name}': {e}")
+            logger.error(f"Failed to instantiate Metric '{metric_name}': {e}")
+            raise RuntimeError(f"Metric creation failed: {e}")

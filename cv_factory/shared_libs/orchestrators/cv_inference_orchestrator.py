@@ -1,5 +1,5 @@
 # cv_factory/shared_libs/orchestrators/cv_inference_orchestrator.py
-# NOTE: File is located in shared_libs/orchestrators/
+
 
 import logging
 from typing import Dict, Any, Union, List
