@@ -1,0 +1,144 @@
+# =========================================================================
+# === CV FACTORY MLOPS CONFIGURATION: DATA LABELING LAYER
+# =========================================================================
+
+# Master schema: LabelingProjectConfig (shared_libs/data_labeling/configs/labeler_config_schema.py)
+# This file defines one or more labeling pipelines, each corresponding to a CV task.
+
+# -------------------------------------------------------------------------
+# GLOBAL PROJECT SETTINGS
+# -------------------------------------------------------------------------
+labeling_pipelines:
+  # --- PIPELINE 1: CLASSIFICATION (MANUAL PARSING MODE) ---
+  - task_type: classification
+    # Annotation Mode: 'manual' (loads pre-labeled data)
+    annotation_mode: manual
+
+    # [Hardening] Tỷ lệ mẫu nhãn được kiểm tra tính hợp lệ ngẫu nhiên
+    validation_ratio: 0.05
+
+    # Cache Configuration: Dữ liệu nhãn đã chuẩn hóa (Pydantic objects) được lưu vào đây.
+    cache_path: s3://cvf-feature-store/labels/classification_v1.parquet
+
+    # Schema: ClassificationLabelerConfig
+    params:
+      # [REQUIRED] URI/Path tới file nhãn thô (CSV/DB/etc.)
+      label_source_uri: s3://cvf-raw-labels/clf_master_sheet.csv
+
+      # Tên cột trong file nhãn
+      image_path_column: file_path_s3
+      label_column: final_class_label
+
+      # Đường dẫn tới file ánh xạ class name -> ID (nếu có)
+      class_map_path: /mnt/configs/class_map_clf.json
+
+  # --- PIPELINE 2: DETECTION (SEMI-ANNOTATION MODE / HITL) ---
+  - task_type: detection
+    # Annotation Mode: 'semi' (uses model proposal + human refinement)
+    annotation_mode: semi
+    validation_ratio: 0.01
+
+    # Schema: DetectionLabelerConfig
+    params:
+      # [REQUIRED] URI/Path tới file metadata ảnh (chỉ cần path/ID) hoặc nhãn thô (COCO JSON)
+      label_source_uri: s3://cvf-raw-labels/detection_metadata_pool.json
+
+      # Định dạng nhãn đầu vào thô (nếu là manual parsing/loading)
+      input_format: coco_json
+
+      # Chuẩn hóa BBox (pixel -> [0, 1])
+      normalize_bbox: true
+
+      # --- AUTO ANNOTATION CONFIGURATION (Triggered by 'semi' mode) ---
+      auto_annotation:
+        # Loại Annotator sử dụng
+        annotator_type: detection
+        # Đường dẫn mô hình Proposal (YOLO/FasterRCNN)
+        model_path: mlflow://prod/yolov5_proposal_v3
+        # [REQUIRED] Ngưỡng tin cậy tối thiểu để chấp nhận đề xuất
+        min_confidence: 0.85
+
+      # --- SEMI ANNOTATION CONFIGURATION (Triggered by 'semi' mode) ---
+      semi_annotation:
+        # [REQUIRED] Phương pháp HITL/Active Learning
+        method_type: refinement
+
+        # Cấu hình cụ thể cho phương pháp Refinement
+        config:
+          # [Hardening] Ngưỡng tin cậy cuối cùng sau khi Refinement tự động (NMS/Filtering)
+          final_threshold: 0.95
+          # Logic NMS (Non-Maximum Suppression)
+          nms_iou_threshold: 0.5
+
+  # --- PIPELINE 3: OCR (AUTO ANNOTATION MODE) ---
+  - task_type: ocr
+    # Annotation Mode: 'auto' (chỉ sinh nhãn tự động, không có nhãn thủ công)
+    annotation_mode: auto
+    validation_ratio: 0.0
+
+    # Schema: OCRLabelerConfig
+    params:
+      label_source_uri: s3://cvf-raw-labels/ocr_unlabeled_data.json
+
+      # Cấu hình Tokenizer (cho convert_to_tensor)
+      tokenizer_config:
+        vocab_path: /mnt/configs/bert_tokenizer_vocab.txt
+      max_sequence_length: 256
+      padding_token: "[PAD]"
+
+      # --- AUTO ANNOTATION CONFIGURATION (Triggered by 'auto' mode) ---
+      auto_annotation:
+        annotator_type: ocr
+        model_path: mlflow://prod/easyocr_proposal_v1
+        min_confidence: 0.90
+        # Thư mục tạm thời để lưu các token BBox artifacts
+        temp_artifact_dir: /tmp/ocr_bboxes_v1
+
+  # --- PIPELINE 4: EMBEDDING (ACTIVE LEARNING MODE) ---
+  - task_type: embedding
+    # Annotation Mode: 'semi' (sử dụng Active Learning để chọn mẫu)
+    annotation_mode: semi
+    validation_ratio: 0.05
+
+    # Schema: EmbeddingLabelerConfig
+    params:
+      label_source_uri: db://feature_store_metadata/embedding_pool
+      vector_dim: 512
+
+      # --- AUTO ANNOTATION CONFIGURATION (Model sinh Uncertainty Score) ---
+      auto_annotation:
+        annotator_type: embedding
+        model_path: mlflow://prod/metric_embedding_v2
+        min_confidence: 0.0 # Bỏ qua confidence, chỉ cần score
+
+      # --- SEMI ANNOTATION CONFIGURATION (Active Learning Selector) ---
+      semi_annotation:
+        # [REQUIRED] Phương pháp Active Learning
+        method_type: active_learning
+
+        config:
+          # Phương pháp lấy mẫu cụ thể
+          method: uncertainty
+          # Số lượng mẫu cần chọn cho vòng gán nhãn tiếp theo
+          selection_size: 500
+          # Trường trong metadata chứa score mô hình (cho Uncertainty Sampling)
+          score_key: uncertainty_score
+
+  # 🟢 --- PIPELINE 5: SEGMENTATION (MANUAL PARSING MODE) --- 🟢
+  - task_type: segmentation
+    # Annotation Mode: 'manual' (chúng ta tải danh sách ảnh & mask files)
+    annotation_mode: manual
+    validation_ratio: 0.10 # Tỷ lệ kiểm tra cao hơn vì mask phức tạp
+
+    # Schema: SegmentationLabelerConfig
+    params:
+      # [REQUIRED] URI/Path tới file danh sách (ảnh_path, mask_path, class_name)
+      label_source_uri: s3://cvf-raw-labels/seg_master_sheet.csv
+
+      # [REQUIRED] Định dạng encoding của mask artifact
+      mask_encoding: png_mask
+
+      # Các cột cần thiết cho SegmentationParser (giả định tồn tại trong CSV)
+      image_path_column: image_uri
+      mask_path_column: mask_uri
+      class_name_column: segmentation_class

@@ -15,10 +15,8 @@ from botocore.exceptions import ClientError as S3ClientError
 from PIL import Image
 import numpy as np
 
-# Import new Base Abstraction
-# NOTE: Update the import path based on the new structure
+# Import Base Abstraction
 from ..base.base_data_connector import BaseDataConnector, OutputData 
-# Assuming BaseDataConnector's OutputData is Union[np.ndarray, List[np.ndarray], ...]
 
 # Optional: Import cv2 only if needed, keeping PIL as primary
 try:
@@ -34,7 +32,8 @@ class ImageConnector(BaseDataConnector):
     """
     Concrete connector for handling image data from local paths, S3, and GCS.
     
-    Implements the BaseDataConnector contract with read (load) and write (save) capabilities.
+    Implements the BaseDataConnector contract with read (load) and write (save) 
+    capabilities, supporting single file and recursive directory/bucket loading.
     """
     
     # --- Initialization and Connection Management (connect, close) ---
@@ -42,6 +41,10 @@ class ImageConnector(BaseDataConnector):
     def __init__(self, connector_id: str, **kwargs: Dict[str, Any]):
         """
         Initializes the ImageConnector with optional client configurations.
+
+        Args:
+            connector_id: A unique identifier for this connector instance.
+            **kwargs: Configuration dictionary, potentially containing cloud client settings.
         """
         super().__init__(connector_id, kwargs)
         self.s3_client = None
@@ -54,7 +57,12 @@ class ImageConnector(BaseDataConnector):
     def connect(self) -> bool:
         """
         Initializes cloud clients (S3, GCS) if their configs are present.
-        Lazy loading of clients is kept for efficiency.
+
+        Returns:
+            bool: True if connection/initialization is successful.
+
+        Raises:
+            ConnectionError: If client initialization fails.
         """
         if self.is_connected:
             return True
@@ -81,23 +89,27 @@ class ImageConnector(BaseDataConnector):
         Closes cloud clients and releases resources.
         """
         if self.s3_client:
-            # Boto3 clients often don't require explicit close, but we log it.
             self.s3_client = None 
         if self.gcs_client:
-            # GCS clients usually handle resource release automatically.
             self.gcs_client = None 
             
-        super().close() # Calls the BaseDataConnector close log
+        super().close()
 
     def _get_s3_client(self):
-        """Lazy-loads and returns the S3 client."""
+        """
+        Lazy-loads and returns the S3 client, handling credentials implicitly.
+        """
         if self.s3_client is None:
-            self.s3_client = boto3.client("s3", **self.boto3_config)
+            # Hardening: Use a session for better resource management
+            session = boto3.Session(**self.boto3_config)
+            self.s3_client = session.client("s3")
             logger.info(f"[{self.connector_id}] S3 client initialized.")
         return self.s3_client
 
     def _get_gcs_client(self):
-        """Lazy-loads and returns the GCS client."""
+        """
+        Lazy-loads and returns the GCS client, handling credentials implicitly.
+        """
         if self.gcs_client is None:
             self.gcs_client = storage.Client(**self.gcs_config)
             logger.info(f"[{self.connector_id}] GCS client initialized.")
@@ -106,7 +118,18 @@ class ImageConnector(BaseDataConnector):
     # --- Read/Load Logic (read) ---
 
     def _load_bytes_to_array(self, img_data: bytes) -> np.ndarray:
-        """Converts raw image bytes into a NumPy array using PIL."""
+        """
+        Converts raw image bytes into a NumPy array using PIL.
+
+        Args:
+            img_data: The raw image file content in bytes.
+
+        Returns:
+            The image as a NumPy array (H, W, C), converted to RGB.
+
+        Raises:
+            IOError: If decoding fails.
+        """
         try:
             img_stream = io.BytesIO(img_data)
             with Image.open(img_stream) as img:
@@ -115,7 +138,15 @@ class ImageConnector(BaseDataConnector):
             raise IOError(f"Failed to decode image bytes using PIL: {e}")
 
     def _read_from_local_file(self, file_path: str) -> np.ndarray:
-        """Loads a single image from a local file path."""
+        """
+        Loads a single image from a local file path.
+
+        Args:
+            file_path: The local path to the image file.
+
+        Returns:
+            The image as a NumPy array.
+        """
         if self.use_pillow:
             with Image.open(file_path) as img:
                 return np.array(img.convert("RGB"))
@@ -125,12 +156,22 @@ class ImageConnector(BaseDataConnector):
                 raise FileNotFoundError(f"OpenCV could not read the image at {file_path}")
             return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         else:
-             # Fallback if PIL is disabled and OpenCV isn't available
              with open(file_path, 'rb') as f:
                  return self._load_bytes_to_array(f.read())
         
     def _read_from_s3(self, s3_url: str) -> np.ndarray:
-        """Loads a single image from an S3 URL."""
+        """
+        Loads a single image from an S3 URL (s3://bucket/key).
+
+        Args:
+            s3_url: The full S3 URI.
+
+        Returns:
+            The image as a NumPy array.
+
+        Raises:
+            FileNotFoundError: If the S3 key is not found.
+        """
         client = self._get_s3_client()
         parsed_url = urlparse(s3_url)
         bucket_name = parsed_url.netloc
@@ -148,7 +189,15 @@ class ImageConnector(BaseDataConnector):
             raise IOError(f"Error loading image from S3 '{s3_url}': {e}")
 
     def _read_from_gcs(self, gcs_url: str) -> np.ndarray:
-        """Loads a single image from a GCS URL."""
+        """
+        Loads a single image from a GCS URL (gs://bucket/blob).
+
+        Args:
+            gcs_url: The full GCS URI.
+
+        Returns:
+            The image as a NumPy array.
+        """
         client = self._get_gcs_client()
         parsed_url = urlparse(gcs_url)
         bucket_name = parsed_url.netloc
@@ -167,18 +216,21 @@ class ImageConnector(BaseDataConnector):
         Reads image data from the specified source_uri.
         
         If source_uri points to a single file, returns np.ndarray.
-        If source_uri points to a directory/bucket (and kwargs['recursive'] is True), 
+        If source_uri points to a directory/bucket prefix (and kwargs['recursive'] is True), 
         returns List[np.ndarray].
         
         Args:
-            source_uri (str): Path to a single image file or a directory/bucket prefix.
-            **kwargs: Extra parameters (e.g., recursive=True).
+            source_uri: Path to a single image file or a directory/bucket prefix.
+            **kwargs: Extra parameters (e.g., recursive=True, supported_exts).
             
         Returns:
             OutputData: A single image array or a list of image arrays.
+
+        Raises:
+            ValueError: For unsupported URI schemes or invalid flag combinations.
         """
         if not self.is_connected:
-            self.connect() # Ensure connection is established
+            self.connect() 
             
         is_directory = kwargs.get("recursive", False)
 
@@ -197,40 +249,117 @@ class ImageConnector(BaseDataConnector):
         else:
             raise ValueError(f"Unsupported source URI or invalid recursive flag: {source_uri}")
 
-    # --- Folder/Recursive Read Logic (renamed from _load_from_local_folder) ---
-    # These private methods handle recursive loading for read()
+    # --- Folder/Recursive Read Logic (Implemented) ---
 
     def _read_from_local_folder(self, folder_path: str, **kwargs) -> List[np.ndarray]:
-        """Loads all images from a local folder recursively."""
+        """
+        Loads all images from a local folder recursively.
+
+        Args:
+            folder_path: The root directory path.
+            **kwargs: Contains supported_exts list.
+
+        Returns:
+            A list of image NumPy arrays.
+        """
         images = []
         supported_exts = kwargs.get("supported_exts", [".jpg", ".jpeg", ".png", ".bmp"])
         
         for root, _, files in os.walk(folder_path):
             for file in files:
+                # Basic extension check (case insensitive)
                 if any(file.lower().endswith(ext) for ext in supported_exts):
                     file_path = os.path.join(root, file)
                     try:
                         images.append(self._read_from_local_file(file_path))
                     except Exception as e:
-                        logger.warning(f"[{self.connector_id}] Skipping file '{file_path}' due to read error: {e}")
+                        logger.warning(f"[{self.connector_id}] Skipping local file '{file_path}' due to read error: {e}")
         return images
         
     def _read_from_s3_folder(self, s3_prefix: str, **kwargs) -> List[np.ndarray]:
-        """Loads all images under an S3 prefix (simulated folder)."""
-        # NOTE: Implement actual listing logic using S3 client here.
-        logger.warning(f"[{self.connector_id}] S3 folder read is not fully implemented: {s3_prefix}")
-        return []
+        """
+        Loads all images under an S3 prefix (simulated folder) recursively.
+
+        Args:
+            s3_prefix: The S3 URI prefix (e.g., s3://bucket/folder/).
+            **kwargs: Contains supported_exts list.
+
+        Returns:
+            A list of image NumPy arrays.
+        """
+        client = self._get_s3_client()
+        parsed_url = urlparse(s3_prefix)
+        bucket_name = parsed_url.netloc
+        # Ensure prefix ends with '/' for directory-like listing if it's a folder.
+        prefix = parsed_url.path.lstrip("/")
+        supported_exts = kwargs.get("supported_exts", [".jpg", ".jpeg", ".png", ".bmp"])
+
+        images = []
+        paginator = client.get_paginator('list_objects_v2')
+        # Use Pagination for large buckets (Scalability Hardening)
+        pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+        
+        for page in pages:
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    object_key = obj['Key']
+                    if any(object_key.lower().endswith(ext) for ext in supported_exts):
+                        s3_url = f"s3://{bucket_name}/{object_key}"
+                        try:
+                            # Reuse single-file reading logic
+                            images.append(self._read_from_s3(s3_url)) 
+                        except Exception as e:
+                            logger.warning(f"[{self.connector_id}] Skipping S3 file '{s3_url}' due to read error: {e}")
+        
+        return images
 
     def _read_from_gcs_folder(self, gcs_prefix: str, **kwargs) -> List[np.ndarray]:
-        """Loads all images under a GCS prefix (simulated folder)."""
-        # NOTE: Implement actual listing logic using GCS client here.
-        logger.warning(f"[{self.connector_id}] GCS folder read is not fully implemented: {gcs_prefix}")
-        return []
+        """
+        Loads all images under a GCS prefix (simulated folder) recursively.
+
+        Args:
+            gcs_prefix: The GCS URI prefix (e.g., gs://bucket/folder/).
+            **kwargs: Contains supported_exts list.
+
+        Returns:
+            A list of image NumPy arrays.
+        """
+        client = self._get_gcs_client()
+        parsed_url = urlparse(gcs_prefix)
+        bucket_name = parsed_url.netloc
+        prefix = parsed_url.path.lstrip("/")
+        supported_exts = kwargs.get("supported_exts", [".jpg", ".jpeg", ".png", ".bmp"])
+
+        images = []
+        bucket = client.bucket(bucket_name)
+        # Use list_blobs with prefix (GCS Pagination is handled internally)
+        blobs = bucket.list_blobs(prefix=prefix)
+
+        for blob in blobs:
+            if any(blob.name.lower().endswith(ext) for ext in supported_exts):
+                gcs_url = f"gs://{bucket_name}/{blob.name}"
+                try:
+                    # Reuse single-file reading logic
+                    images.append(self._read_from_gcs(gcs_url))
+                except Exception as e:
+                    logger.warning(f"[{self.connector_id}] Skipping GCS file '{gcs_url}' due to read error: {e}")
+
+        return images
 
     # --- Write/Persist Logic (write) ---
 
     def _write_to_s3(self, data: np.ndarray, destination_url: str, file_format: str) -> str:
-        """Writes an image array to S3."""
+        """
+        Writes an image array to S3.
+
+        Args:
+            data: The image NumPy array (H, W, C).
+            destination_url: The S3 URI prefix (e.g., s3://bucket/path).
+            file_format: Desired file extension (e.g., 'png', 'jpg').
+
+        Returns:
+            The final S3 URI of the saved image.
+        """
         client = self._get_s3_client()
         parsed_url = urlparse(destination_url)
         bucket_name = parsed_url.netloc
@@ -243,7 +372,7 @@ class ImageConnector(BaseDataConnector):
             # Save array to bytes stream
             img = Image.fromarray(data)
             img_stream = io.BytesIO()
-            img.save(img_stream, format=file_format.upper()) # PIL requires upper-case format
+            img.save(img_stream, format=file_format.upper())
             img_stream.seek(0)
 
             client.put_object(
@@ -257,7 +386,17 @@ class ImageConnector(BaseDataConnector):
             raise IOError(f"Error writing image to S3 '{destination_url}': {e}")
             
     def _write_to_gcs(self, data: np.ndarray, destination_url: str, file_format: str) -> str:
-        """Writes an image array to GCS."""
+        """
+        Writes an image array to GCS.
+
+        Args:
+            data: The image NumPy array (H, W, C).
+            destination_url: The GCS URI prefix (e.g., gs://bucket/path).
+            file_format: Desired file extension (e.g., 'png', 'jpg').
+
+        Returns:
+            The final GCS URI of the saved image.
+        """
         client = self._get_gcs_client()
         parsed_url = urlparse(destination_url)
         bucket_name = parsed_url.netloc
@@ -281,7 +420,17 @@ class ImageConnector(BaseDataConnector):
             raise IOError(f"Error writing image to GCS '{destination_url}': {e}")
 
     def _write_to_local(self, data: np.ndarray, destination_path: str, file_format: str) -> str:
-        """Writes an image array to a local file."""
+        """
+        Writes an image array to a local file.
+
+        Args:
+            data: The image NumPy array (H, W, C).
+            destination_path: The local file path.
+            file_format: Desired file extension.
+
+        Returns:
+            The full local path of the saved image.
+        """
         full_path = f"{destination_path}.{file_format}" if not destination_path.lower().endswith(f".{file_format}") else destination_path
 
         try:
@@ -295,21 +444,19 @@ class ImageConnector(BaseDataConnector):
         """
         Writes/Persists a single image (NumPy array) to the specified destination.
         
-        NOTE: This implementation currently only supports writing a single np.ndarray.
-        Writing a list of arrays would require iteration and should be handled externally 
-        or in a separate high-level orchestrator for clarity.
+        Note: This method is designed for single image persistence. Batch writing 
+        should typically be handled by a higher-level orchestration layer.
         
         Args:
-            data (np.ndarray): The image data to save (H, W, C).
-            destination_uri (str): The local path or cloud URI prefix.
-            file_format (str): Desired file extension (e.g., 'png', 'jpg').
+            data: The image data to save (H, W, C).
+            destination_uri: The local path or cloud URI prefix.
+            file_format: Desired file extension (e.g., 'png', 'jpg').
             
         Returns:
             str: The final URI/path of the saved image.
             
         Raises:
             TypeError: If data is not a NumPy array.
-            ValueError: For unsupported URI schemes.
         """
         if not self.is_connected:
             self.connect()

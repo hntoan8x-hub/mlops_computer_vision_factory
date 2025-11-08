@@ -1,115 +1,138 @@
-# shared_libs/data_labeling/base_labeler.py
+# shared_libs/data_labeling/base_labeler.py (Hardened)
 
 from abc import ABC, abstractmethod
+import logging
 from typing import Any, Dict, List, Union, Optional
 from pydantic import ValidationError
 from torch import Tensor
 
 # Import config schema để validate đầu vào
 from ..data_labeling.configs.labeler_config_schema import LabelerConfig 
-
-# Giả định chúng ta sẽ cần Connector Factory để đọc file nhãn từ S3/GCS
-# Dù Labeler không trực tiếp đọc ảnh, nó cần đọc file nhãn (csv, json)
+# Import Connector Factory để đọc file nhãn
 from ..data_ingestion.factories.connector_factory import ConnectorFactory 
+
+logger = logging.getLogger(__name__)
 
 class BaseLabeler(ABC):
     """
-    Abstract Base Class (ABC) cho tất cả các Labeler trong CV_Factory.
-    Định nghĩa hợp đồng cho việc tải, kiểm tra, và chuẩn hóa nhãn.
+    Abstract Base Class (ABC) for all Labelers in CV_Factory.
+    
+    Defines the contract for loading, validating, and standardizing labels. 
+    It handles configuration validation and acts as a facade for accessing data connectors.
+
+    Attributes:
+        labeler_id (str): Unique ID for the Labeler.
+        raw_config (Dict[str, Any]): The raw configuration input.
+        validated_config (Optional[LabelerConfig]): The validated Pydantic configuration.
+        raw_labels (List[Dict[str, Any]]): List of loaded, parsed, and standardized labels (Dict format).
     """
     
     def __init__(self, connector_id: str, config: Dict[str, Any]):
         """
-        Khởi tạo BaseLabeler.
+        Initializes BaseLabeler.
 
         Args:
-            connector_id (str): ID duy nhất cho Labeler (thường lấy từ tên task).
-            config (Dict[str, Any]): Cấu hình thô, sẽ được validate bằng Pydantic.
+            connector_id: Unique ID for the Labeler (usually the task name).
+            config: Raw configuration, which will be validated via Pydantic.
         """
         self.labeler_id = connector_id
         self.raw_config = config
         self.validated_config: Optional[LabelerConfig] = None
-        
-        # Kết nối tới Connector Factory để chuẩn bị tải file nhãn
         self.connector_factory = ConnectorFactory
+        
         self._validate_and_parse_config()
         
-        # Danh sách nhãn thô đã tải (List[Dict])
         self.raw_labels: List[Dict[str, Any]] = []
 
     def _validate_and_parse_config(self) -> None:
         """
-        Sử dụng Pydantic Schema để kiểm tra tính hợp lệ của cấu hình.
+        Uses the Pydantic Schema (LabelerConfig) to check the validity of the configuration.
+        
+        Raises:
+            ValueError: If the configuration fails Pydantic validation.
         """
         try:
-            # Dùng LabelerConfig để validate cấu trúc chung
+            # Hardening: Validate structure and semantic rules (task_type vs. params)
             self.validated_config = LabelerConfig(**self.raw_config)
-            print(f"[{self.labeler_id}] Config validated successfully.")
+            logger.info(f"[{self.labeler_id}] Configuration validated successfully.")
         except ValidationError as e:
+            logger.critical(f"Labeler configuration failed Pydantic validation for {self.labeler_id}:\n{e}")
             raise ValueError(f"Labeler configuration failed Pydantic validation for {self.labeler_id}:\n{e}")
 
-    # --- Hợp đồng Bắt buộc (Interface Methods) ---
+    # --- Interface Methods ---
 
     @abstractmethod
     def load_labels(self) -> List[Dict[str, Any]]:
         """
-        Tải dữ liệu nhãn thô từ nguồn (CSV, JSON, XML,...) và trả về List[Dict].
-        Phương thức này nên sử dụng ConnectorFactory để thực hiện việc đọc file.
+        Loads raw label data from the source (CSV, JSON, XML,...) and returns List[Dict].
+        
+        Subclasses must implement logic to call Connector.read() and Parser.parse() here.
         
         Returns:
-            List[Dict[str, Any]]: Danh sách các mẫu nhãn đã tải.
+            List[Dict[str, Any]]: List of loaded, parsed, and standardized label samples.
         """
-        # Lưu ý: Các lớp con sẽ triển khai logic gọi Connector.read() ở đây
         raise NotImplementedError
 
     @abstractmethod
     def validate_sample(self, sample: Dict[str, Any]) -> bool:
         """
-        Kiểm tra tính hợp lệ của một mẫu nhãn đã tải (ví dụ: kiểm tra đường dẫn file tồn tại, 
-        giá trị BBox hợp lệ).
+        Performs post-Pydantic validation checks on a single loaded label sample 
+        (e.g., checking if the image path exists, BBox semantic validity).
         
         Args:
-            sample (Dict[str, Any]): Một mẫu nhãn.
+            sample: A single label sample (Dict format).
             
         Returns:
-            bool: True nếu mẫu hợp lệ.
+            bool: True if the sample is valid for use in training.
         """
         raise NotImplementedError
 
     @abstractmethod
     def convert_to_tensor(self, label_data: Any) -> Union[Tensor, Dict[str, Tensor]]:
         """
-        Chuẩn hóa dữ liệu nhãn đã qua xử lý thành PyTorch Tensor(s) sẵn sàng cho DataLoader.
+        Standardizes the processed label data into PyTorch Tensor(s) ready for DataLoader.
         
         Args:
-            label_data (Any): Dữ liệu nhãn đã được chuẩn hóa.
+            label_data: The standardized label data.
             
         Returns:
-            Union[Tensor, Dict[str, Tensor]]: Tensor hoặc Dictionary Tensor.
+            Union[Tensor, Dict[str, Tensor]]: Tensor or Dictionary of Tensors.
         """
         raise NotImplementedError
         
-    # --- Phương thức Chung/Helper ---
+    # --- Helper Method (Abstraction Hardening) ---
 
     def get_source_connector(self):
         """
-        Tạo và trả về Data Connector thích hợp để đọc file nhãn.
+        Creates and returns the appropriate Data Connector to read the label file (e.g., CSV/JSON).
+        
+        Returns:
+            BaseDataConnector: The initialized connector instance.
+            
+        Raises:
+            RuntimeError: If config is not validated.
         """
         if not self.validated_config:
-             raise RuntimeError("Config not initialized.")
+             raise RuntimeError("Configuration not initialized/validated.")
         
-        # Lấy URI từ config cụ thể (giả định mọi config đều có 'label_source_uri')
+        # Lấy URI từ config cụ thể
         source_uri = self.validated_config.params.label_source_uri 
         
-        # Logic đơn giản để xác định loại connector cần dùng để đọc file nhãn
+        # Hardening: Use simple heuristic to select the connector type
         if source_uri.startswith("s3://") or source_uri.startswith("gs://"):
-            connector_type = "api" # Giả định API/S3/GCS connector có thể fetch file
+            connector_type = "image" # Use ImageConnector for S3/GCS file reads
+        elif source_uri.startswith("http://") or source_uri.startswith("https://"):
+             connector_type = "api" # Use API Connector
         else:
-            connector_type = "image" # Giả định ImageConnector có thể đọc file local
+            connector_type = "image" # Default to ImageConnector for local file/path reads
             
-        # Tên connector/ID có thể được điều chỉnh tùy theo nhu cầu
+        # Connector config needs to include necessary params like credentials if S3
+        # Since we use the raw config for connector creation in Data Ingestion,
+        # we pass the relevant part of the validated config.
+        
         return self.connector_factory.get_connector(
             connector_type=connector_type,
-            connector_config={"source": source_uri}, 
+            # NOTE: Passing the params of the specific LabelerConfig to satisfy connector __init__
+            connector_config=self.validated_config.params.model_dump(), 
             connector_id=f"{self.labeler_id}_label_reader"
         )

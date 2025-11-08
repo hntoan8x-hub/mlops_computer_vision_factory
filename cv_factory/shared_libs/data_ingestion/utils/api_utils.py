@@ -1,3 +1,5 @@
+# cv_factory/shared_libs/data_ingestion/utils/api_utils.py (Hardened)
+
 import logging
 from typing import Dict, Any, Callable
 from functools import wraps
@@ -11,11 +13,11 @@ def set_api_headers(default_headers: Dict[str, str], additional_headers: Dict[st
     Combines default and additional headers for an API request.
     
     Args:
-        default_headers (Dict[str, str]): Default headers for the API client.
-        additional_headers (Dict[str, str]): Headers specific to a single request.
+        default_headers: Default headers for the API client.
+        additional_headers: Headers specific to a single request.
 
     Returns:
-        Dict[str, str]: The combined headers.
+        The combined headers.
     """
     headers = default_headers.copy()
     headers.update(additional_headers)
@@ -26,17 +28,20 @@ def handle_api_errors(func: Callable) -> Callable:
     A decorator to handle common API request exceptions and provide clear logging.
 
     Args:
-        func (Callable): The function to be decorated.
+        func: The function to be decorated.
 
     Returns:
-        Callable: The decorated function.
+        The decorated function.
     """
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+            # Hardening: Log status code and truncated response content
+            status = e.response.status_code if e.response is not None else 'N/A'
+            text = e.response.text[:100] if e.response is not None and e.response.text else 'N/A'
+            logger.error(f"HTTP Error: {status}. Response preview: {text}...")
             raise
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Connection Error: A network error occurred while connecting to the API. {e}")

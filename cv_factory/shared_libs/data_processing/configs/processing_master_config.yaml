@@ -1,0 +1,139 @@
+# -----------------------------------------------------------------------------
+# Single Source of Truth (SSOT) - Configuration for CV Data Processing Layer
+# File: processing_master_config.yaml
+# Corresponds to Pydantic Schema: ProcessingConfig
+# -----------------------------------------------------------------------------
+
+# Configuration cho toàn bộ Preprocessing Layer
+enabled: true
+
+# =============================================================================
+# 1. CLEANING CONFIG (IMAGE/FRAME CLEANING)
+# Corresponds to Pydantic Schema: CleaningConfig
+# Policy Mode: Conditional execution based on metadata
+# =============================================================================
+cleaning:
+  enabled: true
+  # Policy Mode: Sử dụng cho Conditional Execution (e.g., skip ColorSpace if input is already RGB)
+  policy_mode: "conditional_metadata"
+
+  steps:
+    # B1: Resizing (Thường là bắt buộc)
+    - type: "resizer"
+      enabled: true
+      params:
+        width: 512
+        height: 512
+        interpolation: 4 # cv2.INTER_AREA
+
+    # B2: Color Space Conversion (Ví dụ: Chuyển BGR sang RGB - Có thể bị Policy skip nếu ảnh là RGB)
+    - type: "color_space"
+      enabled: true
+      params:
+        conversion_code: "BGR2RGB"
+
+    # B3: Normalization (Thường là bước cuối của Cleaning)
+    - type: "normalizer"
+      enabled: true
+      params:
+        # Mean/Std chuẩn cho ImageNet
+        mean: [0.485, 0.456, 0.406]
+        std: [0.229, 0.224, 0.225]
+
+# =============================================================================
+# 2. AUGMENTATION CONFIG (TRAINING ONLY)
+# Corresponds to Pydantic Schema: AugmentationConfig
+# Policy Mode: RandAugment (chọn N bước với cường độ M cố định)
+# =============================================================================
+augmentation:
+  enabled: true
+  policy_mode: "randaugment" # Kích hoạt Policy-based Augmentation
+  n_select: 2 # Chọn ngẫu nhiên 2 phép biến đổi mỗi batch (N)
+  magnitude: 0.8 # Cường độ áp dụng (M) - float [0.0, 1.0]
+
+  steps:
+    - type: "flip_rotate"
+      enabled: true
+      params:
+        horizontal_flip: 0.5
+        rotate_angle: 30
+
+    - type: "noise_injection"
+      enabled: true
+      params:
+        std_dev: 50.0 # Base Std Dev, sẽ được nhân với Magnitude (0.8)
+        probability: 0.9
+
+    - type: "cutmix"
+      enabled: true
+      params:
+        alpha: 1.0
+
+    - type: "mixup"
+      enabled: true
+      params:
+        alpha: 0.5
+
+# =============================================================================
+# 3. FEATURE EXTRACTION & EMBEDDING CONFIG
+# Corresponds to Pydantic Schema: FeatureExtractionConfig
+# Policy Mode: Conditional execution (e.g., skip SIFT nếu độ phân giải quá cao)
+# =============================================================================
+feature_engineering:
+  enabled: true
+  policy_mode: "conditional_metadata"
+
+  components:
+    # B1: Deep Learning Embedder (Quy tắc Governance: Chỉ 1 Embedder được phép hoạt động)
+    - type: "cnn_embedder"
+      enabled: true
+      params:
+        model_name: "resnet50"
+        pretrained: true
+
+    # B2: Dimensionality Reduction (Stateful - cần Fit/Save/Load)
+    - type: "dim_reducer"
+      enabled: true
+      params:
+        method: "pca"
+        n_components: 128 # Giảm từ 2048/512 xuống 128
+
+    # B3: Classical Feature (Có thể bị Policy skip)
+    - type: "sift_extractor"
+      enabled: true
+      params:
+        nfeatures: 500
+
+# =============================================================================
+# 4. VIDEO PROCESSING CONFIG (NEW INTEGRATION)
+# Corresponds to Pydantic Schema: VideoProcessingConfig
+# =============================================================================
+video_processing:
+  enabled: true
+  policy_mode: "default"
+
+  cleaners:
+    # B1: Video Resizer (4D -> 4D)
+    - type: "video_resizer"
+      enabled: true
+      params:
+        width: 256
+        height: 256
+
+    # B2: Noise Reducer
+    - type: "video_noise_reducer"
+      enabled: true
+      params:
+        filter_type: "gaussian"
+        kernel_size: 7
+
+  samplers:
+    # B3: Frame Sampler (The Bridge Component - 4D -> List[3D])
+    # Dùng Policy Sampler để dễ dàng chuyển đổi chiến lược lấy mẫu
+    - type: "policy_sampler"
+      enabled: true
+      params:
+        # Policy Type: Tên của Sampler Atomic được PolicySampler chọn
+        policy_type: "keyframe_extractor"
+        threshold: 0.1 # Threshold cho KeyFrameExtractor
+        min_interval: 5

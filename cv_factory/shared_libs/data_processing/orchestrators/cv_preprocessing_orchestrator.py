@@ -1,15 +1,19 @@
-# cv_factory/shared_libs/data_processing/orchestrators/cv_preprocessing_orchestrator.py (FINAL RESTRUCTURED)
+# cv_factory/shared_libs/data_processing/orchestrators/cv_preprocessing_orchestrator.py (FINAL INTEGRATED)
 
 import logging
+import numpy as np
+import os
 from typing import Dict, Any, Union, List, Optional, Type
-import copy
 
 # Import Lower-Level Orchestrators and Master Schema
-from ..augmenters.augmenter_orchestrator import AugmenterOrchestrator
-from ..cleaners.cleaner_orchestrator import CleanerOrchestrator
-from ..embedders.embedder_orchestrator import EmbedderOrchestrator
-from ..feature_extractors.feature_extractor_orchestrator import FeatureExtractorOrchestrator
-# Import the actual Master Schema from the provided file
+from ..augmenters.image_augmenter_orchestrator import ImageAugmenterOrchestrator 
+from ..cleaners.image_cleaner_orchestrator import ImageCleanerOrchestrator 
+from ..embedders.image_embedder_orchestrator import ImageEmbedderOrchestrator 
+from ..feature_extractors.image_feature_extractor_orchestrator import ImageFeatureExtractorOrchestrator 
+from .video_processing_orchestrator import VideoProcessingOrchestrator 
+
+# CRITICAL: Import the decoupled utility function
+from .._utils.data_type_utils import is_video_data 
 from ...configs.preprocessing_config_schema import ProcessingConfig, FeatureExtractionConfig 
 
 logger = logging.getLogger(__name__)
@@ -18,80 +22,77 @@ logger = logging.getLogger(__name__)
 PreprocessingInput = Union[Any, List[Any]]
 PreprocessingOutput = Union[Any, List[Any]]
 
+
 class CVPreprocessingOrchestrator:
     """
     High-level Façade/Orchestrator for the entire Computer Vision preprocessing pipeline.
 
-    It validates the master configuration (ProcessingConfig) and delegates all lifecycle 
-    operations (fit, transform/run, save, load) to the specialized sub-orchestrators.
+    Handles data flows for both Image (3D) and Video (4D) inputs by coordinating 
+    specialized sub-orchestrators.
     """
 
     def __init__(self, config: Dict[str, Any], context: str):
         """
-        Initializes the Orchestrator, validating configuration against ProcessingConfig.
+        Initializes the Orchestrator by validating configuration and building the pipeline.
+
+        Args:
+            config (Dict[str, Any]): The master configuration dictionary for the pipeline.
+            context (str): The execution context ('training', 'inference', 'evaluation').
+
+        Raises:
+            RuntimeError: If initialization of any sub-orchestrator fails.
         """
-        # 1. Configuration Validation: Use the master schema
-        # This will fail if 'cleaning', 'augmentation', or 'feature_engineering' keys are missing/invalid.
-        self.validated_config: ProcessingConfig = ProcessingConfig(**config)
+        try:
+            self.validated_config: ProcessingConfig = ProcessingConfig(**config)
+        except Exception as e:
+            logger.error(f"Master ProcessingConfig validation failed: {e}")
+            raise ValueError(f"Invalid Master Configuration: {e}")
+            
         self.context = context.lower()
         self.processor_type = 'none' 
         
-        self.cleaner: CleanerOrchestrator
-        self.augmenter: AugmenterOrchestrator
-        self.feature_processor: Optional[Union[EmbedderOrchestrator, FeatureExtractorOrchestrator]] = None
+        # Image Pipeline Sub-Orchestrators
+        self.image_cleaner: ImageCleanerOrchestrator
+        self.image_augmenter: ImageAugmenterOrchestrator
+        self.feature_processor: Optional[Union[ImageEmbedderOrchestrator, ImageFeatureExtractorOrchestrator]] = None
         
-        self._initialize_sub_orchestrators()
+        # Video Pipeline Sub-Orchestrator
+        self.video_processor: Optional[VideoProcessingOrchestrator] = None
 
-    def _determine_feature_processor(self, feature_config: FeatureExtractionConfig) -> Optional[Type[Union[EmbedderOrchestrator, FeatureExtractorOrchestrator]]]:
-        """
-        Analyzes the steps in feature_engineering to determine whether to use Embedder or Feature Extractor.
+        self._initialize_sub_orchestrators(config) 
         
-        Returns the appropriate class type or None.
-        """
-        if not feature_config.enabled:
-            return None
-            
-        # Check if any component is a deep learning embedder
+    # --- Initialization Logic (Remains the same) ---
+    
+    def _determine_feature_processor(self, feature_config: FeatureExtractionConfig) -> Optional[Type[Union[ImageEmbedderOrchestrator, ImageFeatureExtractorOrchestrator]]]:
+        # Logic remains the same (select Embedder or Feature Extractor class)
         embedder_types = ['cnn_embedder', 'vit_embedder']
-        
-        # NOTE: FeatureExtractionConfig has a single 'components' list for all steps
         has_embedder = any(step.type in embedder_types for step in feature_config.components)
         
         if has_embedder:
             self.processor_type = 'embedding'
-            return EmbedderOrchestrator
+            return ImageEmbedderOrchestrator
         elif feature_config.components:
             self.processor_type = 'feature_extraction'
-            return FeatureExtractorOrchestrator
-            
+            return ImageFeatureExtractorOrchestrator
         return None
 
-    def _initialize_sub_orchestrators(self):
-        """
-        Initializes the lower-level Orchestrators based on the validated configuration.
-        """
+    def _initialize_sub_orchestrators(self, config: Dict[str, Any]):
+        """Initializes the lower-level Orchestrators."""
         try:
-            # 1. Cleaner (Uses config['cleaning'])
-            self.cleaner = CleanerOrchestrator(
-                config=self.validated_config.cleaning.dict()
-            )
+            # 1. Image Cleaners/Augmenters/Feature Processors
+            self.image_cleaner = ImageCleanerOrchestrator(config=self.validated_config.cleaning.dict())
+            self.image_augmenter = ImageAugmenterOrchestrator(config=self.validated_config.augmentation.dict())
             
-            # 2. Augmenter (Uses config['augmentation'])
-            self.augmenter = AugmenterOrchestrator(
-                config=self.validated_config.augmentation.dict()
-            )
-            
-            # 3. Feature/Embedding (Uses config['feature_engineering'])
             processor_cls = self._determine_feature_processor(self.validated_config.feature_engineering)
-            
             if processor_cls:
-                # The FeatureExtractorOrchestrator/EmbedderOrchestrator must be able to parse
-                # the generic FeatureExtractionConfig structure they are passed.
-                self.feature_processor = processor_cls(
-                    config=self.validated_config.feature_engineering.dict()
-                )
+                self.feature_processor = processor_cls(config=self.validated_config.feature_engineering.dict())
+                
+            # 2. Video Processor (NEW)
+            video_config = config.get('video_processing') 
+            if video_config and video_config.get('enabled', False):
+                 self.video_processor = VideoProcessingOrchestrator(config=video_config)
             
-            logger.info(f"Initialized CV Preprocessing Orchestrator in '{self.context}' context. Final Processor: {self.processor_type}")
+            logger.info(f"CV Preprocessing initialized. Processor: {self.processor_type}. Video Flow Enabled: {self.video_processor is not None}")
 
         except Exception as e:
             logger.error(f"Failed to initialize sub-orchestrators: {e}")
@@ -99,36 +100,60 @@ class CVPreprocessingOrchestrator:
 
     # --- Core Execution Delegation (Transform/Run) ---
     
-    def run(self, data: PreprocessingInput, **kwargs) -> PreprocessingOutput:
+    def run(self, data: PreprocessingInput, metadata: Optional[Dict[str, Any]] = None, **kwargs: Dict[str, Any]) -> PreprocessingOutput:
         """
-        Executes the entire preprocessing flow: CLEAN -> [AUGMENT] -> [FEATURE/EMBED].
-        
-        This method is the primary entry point for CVPredictor/CVDataset.
+        Executes the entire preprocessing flow, dynamically switching between Image and Video pipelines.
+
+        Args:
+            data (PreprocessingInput): The raw input data (Image or Video).
+            metadata (Optional[Dict[str, Any]]): Metadata (e.g., color format, video FPS).
+            **kwargs: Additional arguments passed to augmenters (e.g., 'labels').
+
+        Returns:
+            PreprocessingOutput: The final processed data (e.g., clean image or feature vector/list of feature vectors).
         """
         if data is None:
-            logger.warning("Input data for preprocessing is None. Returning None.")
             return None
 
-        # 1. Cleaning (Delegate to consistent 'transform')
-        cleaned_data = self.cleaner.transform(data)
-        logger.debug("Step 1: Data Cleaning completed.")
+        # --- A. VIDEO PIPELINE (4D Array Input) ---
+        # CRITICAL FIX: Use the imported is_video_data utility function
+        if self.video_processor and is_video_data(data): 
+            logger.info("Detected Video Input. Executing Video Processing Flow.")
+            
+            # 1. Video Processing: Cleaners -> Sampler (Output: List of 3D Frames)
+            list_of_frames = self.video_processor.transform(data, metadata=metadata)
+            
+            # 2. Image Processing (on each frame)
+            final_features = []
+            for frame in list_of_frames:
+                # Reuse the EXISTING Image Flow (Cleaner -> Augmenter -> Feature) for each frame
+                feature_vector = self._run_image_pipeline(frame, metadata=metadata, **kwargs)
+                final_features.append(feature_vector)
+                
+            return final_features 
+        
+        # --- B. IMAGE PIPELINE (3D Array Input or fallback) ---
+        else:
+            return self._run_image_pipeline(data, metadata=metadata, **kwargs)
 
-        # 2. Augmentation - Only applied if enabled and context is 'training'
+
+    def _run_image_pipeline(self, data: PreprocessingInput, metadata: Optional[Dict[str, Any]] = None, **kwargs: Dict[str, Any]) -> PreprocessingOutput:
+        """Helper method to run the standard Image/Feature pipeline on a single image or batch."""
+        
+        # 1. Cleaning (Delegate, pass metadata for Adaptive Cleaning)
+        cleaned_data = self.image_cleaner.transform(data, metadata=metadata)
+        
+        # 2. Augmentation - Only applied if context is 'training'
         augmented_data = cleaned_data
         is_aug_enabled = self.validated_config.augmentation.enabled and len(self.validated_config.augmentation.steps) > 0
         
         if self.context == 'training' and is_aug_enabled:
-            # Delegate to consistent 'transform', passing through **kwargs (e.g., 'labels')
-            augmented_data = self.augmenter.transform(cleaned_data, **kwargs)
-            logger.debug("Step 2: Data Augmentation completed.")
-
+            augmented_data = self.image_augmenter.transform(cleaned_data, **kwargs)
+        
         # 3. Feature Extraction / Embedding - Optional step
         final_output = augmented_data
         if self.feature_processor:
-            # Delegate to the appropriate 'transform' (which is the public 'extract' or 'embed' method)
-            # NOTE: We assume 'transform' is the correct delegation target for the engine
-            final_output = self.feature_processor.transform(augmented_data) 
-            logger.debug(f"Step 3: {self.processor_type.capitalize()} completed.")
+            final_output = self.feature_processor.transform(augmented_data, metadata=metadata) 
 
         return final_output
 
@@ -138,12 +163,14 @@ class CVPreprocessingOrchestrator:
         """Delegates the fitting process to all initialized stateful sub-orchestrators."""
         logger.info("Starting fitting process for all stateful preprocessing components.")
         
-        # Delegation: Cleaner, Augmenter, and Feature Processor must support fit()
-        self.cleaner.fit(X, y)
-        self.augmenter.fit(X, y)
+        self.image_cleaner.fit(X, y)
+        self.image_augmenter.fit(X, y)
             
         if self.feature_processor:
             self.feature_processor.fit(X, y)
+            
+        if self.video_processor:
+             self.video_processor.fit(X, y)
             
         logger.info("Preprocessing pipeline fitting completed.")
         return self
@@ -152,11 +179,14 @@ class CVPreprocessingOrchestrator:
         """Delegates saving the state of the entire preprocessing pipeline."""
         logger.info(f"Saving full preprocessing pipeline state to {directory_path}...")
         
-        self.cleaner.save(f"{directory_path}/cleaner")
-        self.augmenter.save(f"{directory_path}/augmenter")
+        self.image_cleaner.save(os.path.join(directory_path, "cleaner"))
+        self.image_augmenter.save(os.path.join(directory_path, "augmenter"))
             
         if self.feature_processor:
-            self.feature_processor.save(f"{directory_path}/processor")
+            self.feature_processor.save(os.path.join(directory_path, "processor"))
+            
+        if self.video_processor:
+            self.video_processor.save(os.path.join(directory_path, "video_processor")) 
 
         logger.info("Full preprocessing pipeline state saved successfully.")
 
@@ -164,10 +194,13 @@ class CVPreprocessingOrchestrator:
         """Delegates loading the state of the entire preprocessing pipeline."""
         logger.info(f"Loading full preprocessing pipeline state from {directory_path}...")
         
-        self.cleaner.load(f"{directory_path}/cleaner")
-        self.augmenter.load(f"{directory_path}/augmenter")
+        self.image_cleaner.load(os.path.join(directory_path, "cleaner"))
+        self.image_augmenter.load(os.path.join(directory_path, "augmenter"))
             
         if self.feature_processor:
-            self.feature_processor.load(f"{directory_path}/processor")
+            self.feature_processor.load(os.path.join(directory_path, "processor"))
+            
+        if self.video_processor:
+            self.video_processor.load(os.path.join(directory_path, "video_processor")) 
 
         logger.info("Full preprocessing pipeline state loaded successfully.")

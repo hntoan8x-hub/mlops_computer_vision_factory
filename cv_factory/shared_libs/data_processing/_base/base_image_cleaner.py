@@ -1,3 +1,4 @@
+# shared_libs/data_processing/_base/base_image_cleaner.py
 import abc
 import numpy as np
 from typing import Dict, Any, Union, List
@@ -7,9 +8,10 @@ ImageData = Union[np.ndarray, List[np.ndarray]]
 
 class BaseImageCleaner(abc.ABC):
     """
-    Abstract Base Class for image cleaning components.
+    Abstract Base Class for image cleaning components (Preprocessing).
 
-    Defines a standard interface for preprocessing steps that clean raw image data.
+    Defines a standard interface for essential preprocessing steps that clean 
+    and standardize raw image data (e.g., resizing, normalization, color space conversion).
     """
 
     @abc.abstractmethod
@@ -17,11 +19,18 @@ class BaseImageCleaner(abc.ABC):
         """
         Applies a cleaning transformation to the input image(s).
 
+        This method should handle both single images and batches (list of images).
+
         Args:
-            image (ImageData): The input image or a list of images (e.g., from an IngestionOrchestrator).
-            **kwargs: Additional parameters for the transformation.
+            image (ImageData): The input image or a list of images (e.g., raw data 
+                               from a Data Connector).
+            **kwargs: Additional parameters for the transformation (e.g., interpolation 
+                      method for resizing).
 
         Returns:
             ImageData: The transformed image(s).
+        
+        Raises:
+            NotImplementedError: If the method is not implemented in the derived class.
         """
         raise NotImplementedError

@@ -1,16 +1,19 @@
-# shared_libs/data_labeling/semi_annotation/methods/refinement_annotator.py
+# shared_libs/data_labeling/semi_annotation/methods/refinement_annotator.py (Hardened)
 
 import logging
 from typing import List, Dict, Any, Union
 from ..base_semi_annotator import BaseSemiAnnotator
 from ....data_labeling.configs.label_schema import StandardLabel
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
 class RefinementAnnotator(BaseSemiAnnotator):
     """
-    Annotator chuyên biệt cho việc Tinh chỉnh nhãn (Refinement).
-    Sử dụng logic hoặc feedback để cải thiện nhãn đề xuất.
+    Specialized Annotator for Label Refinement (Finalization).
+    
+    Uses logic (e.g., thresholding, NMS) or explicit user feedback to finalize 
+    the quality of proposed labels before they enter the 'Trusted Label' pool.
     """
 
     def refine(self, 
@@ -18,27 +21,65 @@ class RefinementAnnotator(BaseSemiAnnotator):
                user_feedback: Union[Dict[str, Any], None] = None
     ) -> List[StandardLabel]:
         """
-        Logic: Hợp nhất (NMS), loại bỏ overlap, hoặc áp dụng sửa đổi từ người dùng.
+        Performs refinement: merging, overlap removal (NMS), or applying user modifications.
+        
+        Args:
+            proposals: List of proposed labels.
+            user_feedback: Data containing user actions ('accepted', 'rejected') or corrected labels.
+
+        Returns:
+            List[StandardLabel]: List of finalized and validated labels.
         """
         final_labels: List[StandardLabel] = []
         
-        if user_feedback and user_feedback.get("action") == "accepted":
-            # Nếu người dùng chấp nhận, sử dụng nhãn đề xuất hoặc nhãn đã sửa đổi
-            final_labels = proposals # Hoặc user_feedback.get("corrected_labels")
-            logger.info("Labels accepted and finalized by user feedback.")
-        elif user_feedback and user_feedback.get("action") == "rejected":
-            # Nếu người dùng từ chối, bỏ qua đề xuất
-            logger.warning("Labels rejected by user feedback.")
-            final_labels = []
+        if user_feedback:
+            action = user_feedback.get("action")
+            
+            if action == "accepted":
+                # Use proposals as accepted, or load corrected labels from feedback
+                corrected_data = user_feedback.get("corrected_labels", proposals)
+                
+                # Hardening: Re-validate user input/accepted proposals against Pydantic
+                for label_data in corrected_data:
+                    try:
+                        # Assuming label_data is already a Pydantic object or a dict matching schema
+                        if isinstance(label_data, dict):
+                            # Try to convert dict back to Pydantic (requires knowing the type)
+                            # Simple approach: assume proposals are the source of truth if type is ambiguous
+                            final_labels.append(StandardLabel.__args__[0](**label_data)) # Simplified type recovery
+                        else:
+                            final_labels.append(label_data)
+                    except ValidationError as e:
+                        logger.error(f"User accepted label failed re-validation: {e}")
+                
+                logger.info(f"Labels accepted and finalized by user feedback ({len(final_labels)} labels).")
+                
+            elif action == "rejected":
+                logger.warning("Labels rejected by user feedback.")
+                return []
+            
         else:
-            # Logic làm sạch tự động (ví dụ: Non-Maximum Suppression (NMS) cho BBox)
-            # Giả định: chỉ giữ lại các nhãn có độ tin cậy cao nhất hoặc không trùng lặp
-            final_labels = [p for p in proposals if p.model_dump().get("confidence", 1.0) >= self.config.get("final_threshold", 0.9)]
-            logger.info(f"Applied automated refinement: filtered {len(proposals) - len(final_labels)} proposals.")
+            # Automated refinement (Fallback logic, e.g., high confidence filtering)
+            threshold = self.config.get("final_threshold", 0.9)
+            
+            for p in proposals:
+                # Try to extract confidence safely
+                confidence = p.model_dump().get("confidence", threshold + 0.01) # Default to pass if confidence not tracked
+                if confidence >= threshold:
+                    final_labels.append(p)
+                    
+            logger.info(f"Applied automated refinement: filtered {len(proposals) - len(final_labels)} proposals (Threshold: {threshold}).")
 
         return final_labels
 
     def select_samples(self, pool_metadata: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Không có chức năng chọn mẫu. Trả về rỗng."""
-        return []
+        """
+        Non-functional for RefinementAnnotator. Returns an empty list.
+        
+        Args:
+            pool_metadata: Full metadata list of unlabelled or unconfirmed data samples.
 
+        Returns:
+            List[Dict]: Empty list.
+        """
+        return []

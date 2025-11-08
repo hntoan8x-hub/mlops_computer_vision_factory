@@ -1,4 +1,4 @@
-# shared_libs/data_labeling/implementations/detection_labeler.py (Cập nhật)
+# shared_libs/data_labeling/implementations/detection_labeler.py (Hardened)
 
 import json
 from torch import tensor, float32, long
@@ -9,7 +9,7 @@ from ..base_labeler import BaseLabeler
 from ...data_labeling.configs.label_schema import DetectionLabel
 from ...data_labeling.configs.labeler_config_schema import DetectionLabelerConfig
 
-# IMPORT CÁC FACTORY MỚI
+# IMPORT CÁC FACTORY
 from ..manual_annotation.factory import ManualAnnotatorFactory
 from ..auto_annotation.factory import AutoAnnotatorFactory
 from ..semi_annotation.semi_annotator_factory import SemiAnnotatorFactory
@@ -18,49 +18,53 @@ logger = logging.getLogger(__name__)
 
 class DetectionLabeler(BaseLabeler):
     """
-    Concrete Labeler cho Object Detection. 
-    Điều phối 3 chế độ: Manual Parsing, Auto Annotation, và Semi-Annotation Refinement.
+    Concrete Labeler for Object Detection. 
+    
+    Orchestrates the three modes: Manual Parsing, Auto Annotation, and Semi-Annotation Refinement.
+    
+    Attributes:
+        annotation_mode (Literal): Current mode of operation ("manual", "auto", or "semi").
+        auto_annotator (AutoAnnotatorFactory): Instance for generating proposals.
+        semi_annotator (SemiAnnotatorFactory): Instance for refinement/selection.
     """
 
     def __init__(self, connector_id: str, config: Dict[str, Any]):
         super().__init__(connector_id, config)
-        self.class_name_to_id: Dict[str, int] = {"person": 1, "car": 2} # Ví dụ map
-        # Lấy chế độ annotation từ config
-        self.annotation_mode: Literal["manual", "auto", "semi"] = self.validated_config.get("annotation_mode", "manual")
-        # Khởi tạo các Annotator cần thiết (cho chế độ auto/semi)
+        self.class_name_to_id: Dict[str, int] = {"__background__": 0, "person": 1, "car": 2} # Hardening: Add background class
+        self.annotation_mode: Literal["manual", "auto", "semi"] = self.validated_config.raw_config.get("annotation_mode", "manual")
+        
+        # Hardening: Ép kiểu config params đã được validate
+        self.config_params: DetectionLabelerConfig = self.validated_config.params
+
         self.auto_annotator = self._initialize_auto_annotator()
         self.semi_annotator = self._initialize_semi_annotator()
 
 
     def _initialize_auto_annotator(self):
-        """Khởi tạo Auto Annotator (ví dụ: ProposalGenerator) nếu cần."""
+        """Initializes Auto Annotator (e.g., ProposalGenerator) if needed."""
         if self.annotation_mode in ["auto", "semi"]:
-             # Giả định config auto_model là cần thiết cho AutoAnnotator
-             auto_config = self.validated_config.model_dump().get("auto_annotation", {})
+             auto_config = self.validated_config.raw_config.get("auto_annotation", {})
              if auto_config:
-                 # Chúng ta cần biết loại Auto Annotator nào cần dùng (ví dụ: 'proposal_detection')
-                 annotator_type = auto_config.get("annotator_type", "detection_proposal") 
+                 annotator_type = auto_config.get("annotator_type", "detection") 
                  return AutoAnnotatorFactory.get_annotator(annotator_type, auto_config)
         return None
 
     def _initialize_semi_annotator(self):
-        """Khởi tạo Semi Annotator (ví dụ: RefinementAnnotator) nếu cần."""
+        """Initializes Semi Annotator (e.g., RefinementAnnotator) if needed."""
         if self.annotation_mode == "semi":
-            semi_config = self.validated_config.model_dump().get("semi_annotation", {})
+            semi_config = self.validated_config.raw_config.get("semi_annotation", {})
             if semi_config:
-                # Chúng ta cần biết phương pháp Semi nào cần dùng (ví dụ: 'refinement')
                 method_type = semi_config.get("method_type", "refinement")
                 return SemiAnnotatorFactory.get_annotator(method_type, semi_config)
         return None
 
     def load_labels(self) -> List[Dict[str, Any]]:
         """
-        Tải dữ liệu nhãn thô hoặc metadata ảnh tùy theo chế độ Annotation.
+        Loads raw labels or image metadata based on the annotation mode.
         """
-        config: DetectionLabelerConfig = self.validated_config.params
-        source_uri = config.label_source_uri
+        source_uri = self.config_params.label_source_uri
         
-        # 1. Tải Dữ liệu/Metadata thô
+        # 1. Load Raw Data/Metadata
         try:
             with self.get_source_connector() as connector:
                 raw_data = connector.read(source_uri=source_uri) 
@@ -69,32 +73,32 @@ class DetectionLabeler(BaseLabeler):
             raise
         
         if self.annotation_mode == "manual":
-            # 2a. CHẾ ĐỘ MANUAL: Sử dụng Manual Annotator để Parsing (COCO/VOC)
+            # 2a. MANUAL MODE: Use Manual Annotator (Parser)
             try:
                 parser = ManualAnnotatorFactory.get_annotator(
                     domain_type="detection", 
-                    config=self.validated_config.model_dump()
+                    config=self.validated_config.model_dump() # Pass the full validated config
                 )
                 validated_labels_pydantic: List[DetectionLabel] = parser.parse(raw_data)
+                
+                # Hardening: Convert Pydantic object to dictionary for DataLoader
                 final_labels = [label.model_dump() for label in validated_labels_pydantic]
             except Exception as e:
                 logger.error(f"Detection manual parsing failed: {e}")
                 raise
             
         elif self.annotation_mode in ["auto", "semi"]:
-            # 2b. CHẾ ĐỘ AUTO/SEMI: Dữ liệu thô là danh sách metadata (image_path)
-            # Không có nhãn, chỉ có metadata ảnh. Nhãn sẽ được sinh trong __getitem__.
+            # 2b. AUTO/SEMI MODE: Raw data is image metadata.
             
-            # Giả định raw_data đã là List[Dict] (metadata ảnh)
+            # Hardening: Ensure raw_data is converted to a List[Dict] structure
             if isinstance(raw_data, dict) and "images" in raw_data:
-                 # Ví dụ: Dữ liệu thô là file COCO-like chỉ chứa phần 'images'
                  final_labels = raw_data["images"]
             elif isinstance(raw_data, list):
                  final_labels = raw_data
             else:
                  raise TypeError("Auto/Semi mode expects List[Dict] or Dict with 'images' key.")
             
-            logger.info(f"Loaded {len(final_labels)} samples for {self.annotation_mode} annotation. Actual annotation will run per-sample.")
+            logger.info(f"Loaded {len(final_labels)} samples for {self.annotation_mode} annotation. Actual annotation runs per-sample.")
             
         else:
             raise ValueError(f"Unsupported annotation_mode: {self.annotation_mode}")
@@ -103,25 +107,37 @@ class DetectionLabeler(BaseLabeler):
         self.raw_labels = final_labels
         return self.raw_labels
 
-    # Các phương thức khác (validate_sample, convert_to_tensor) giữ nguyên
     def validate_sample(self, sample: Dict[str, Any]) -> bool:
-        # Giữ nguyên logic validation (ví dụ: kiểm tra BBox hợp lệ)
+        """
+        Performs validation of a loaded label sample.
+        """
         objects = sample.get("objects", [])
         if not objects:
             return False
+            
+        # Hardening: Re-validate BBox semantic rules (already done by Pydantic, but good runtime check)
         for obj in objects:
             x1, y1, x2, y2 = obj['bbox']
             if x1 >= x2 or y1 >= y2:
+                logger.warning(f"Invalid BBox bounds found in sample: {sample.get('image_path')}")
                 return False
+            if obj['class_name'] not in self.class_name_to_id:
+                 logger.warning(f"Unknown class name '{obj['class_name']}' found. Skipping sample.")
+                 return False
+                 
         return True
 
     def convert_to_tensor(self, sample: Dict[str, Any]) -> Tuple[tensor, tensor]:
-        # Giữ nguyên logic chuyển đổi Tensor
+        """
+        Converts Bounding Boxes and Class IDs into PyTorch Tensors.
+        """
         objects: List[Dict[str, Any]] = sample.get("objects", [])
         if not objects:
             return tensor([]).float(), tensor([]).long()
 
         bboxes: List[Tuple[float, float, float, float]] = [obj["bbox"] for obj in objects]
+        
+        # Hardening: Map class name to ID, defaulting to 0 (__background__) if missing
         class_ids: List[int] = [self.class_name_to_id.get(obj["class_name"], 0) for obj in objects] 
 
         bbox_tensor = tensor(bboxes, dtype=float32)

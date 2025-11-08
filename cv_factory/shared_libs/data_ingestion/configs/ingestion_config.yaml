@@ -1,32 +1,127 @@
-# Ví dụ về file cấu hình cho quá trình ingestion
-# File này sẽ được tải và xác thực bằng Pydantic.
-sources:
-  - type: "image"
-    params:
-      source: "/path/to/local/image_folder"
-      use_pillow: true
+# =========================================================================
+# === CV FACTORY MLOPS CONFIGURATION: DATA INGESTION LAYER
+# =========================================================================
 
-  - type: "video"
-    params:
-      source: "/path/to/local/video.mp4"
-      frame_skip: 5
+# Master schema: IngestionConfig (shared_libs/data_ingestion/configs/ingestion_config_schema.py)
+# This file defines all static and streaming data sources for CV training and inference.
 
-  - type: "dicom"
-    params:
-      source: "s3://my-medical-bucket/patient_scans/"
-      anonymize: true
+# -------------------------------------------------------------------------
+# GLOBAL INGESTION SETTINGS
+# -------------------------------------------------------------------------
+data_split_ratio:
+  # [Hardening] Ratios for splitting the loaded dataset. Must sum to 1.0 (if 'test' is included).
+  train: 0.8
+  validation: 0.2
+  # test: 0.0 # Optional: You can uncomment if needed
 
-  - type: "api"
-    params:
-      source: "https://api.example.com/v1/images/123"
-      headers:
-        Authorization: "Bearer your_token"
+metadata_uri: null
+# Optional: URI to an external metadata manifest (e.g., S3 path to a Parquet file
+# containing pre-calculated features or data quality reports).
 
-  - type: "camera"
-    params:
-      source: 0 # 0 for default webcam, or a URL for RTSP stream
+# -------------------------------------------------------------------------
+# CONNECTOR DEFINITIONS (List of data sources/connectors)
+# Schema: List[SourceConnector] - Must pass Pydantic validation.
+# -------------------------------------------------------------------------
+connectors:
+  # --- 1. STATIC CONNECTOR: ImageConnector (AWS S3) ---
+  - type: image
+    # Schema: ImageConnectorConfig
 
-  - type: "kafka"
-    params:
-      bootstrap_servers: ["broker1:9092", "broker2:9092"]
-      topic: "realtime_camera_feed"
+    # [REQUIRED] URI/Path to the image source (S3 prefix or single file).
+    uri: s3://cvf-raw-data-bucket/training/images/
+
+    # [Hardening] Enable/Disable AWS clients for security/efficiency
+    aws_enabled: true
+    gcp_enabled: false
+
+    # Parameters for recursive reading (used by ImageConnector.read)
+    recursive: true
+    supported_exts: [".jpg", ".png", ".jpeg"]
+
+    # Example for boto3_config (optional, often handled by IAM roles in production)
+    boto3_config: {}
+
+  # --- 2. STATIC CONNECTOR: VideoConnector (Local File) ---
+  - type: video
+    # Schema: VideoConnectorConfig
+
+    # [REQUIRED] Local path to the video file.
+    uri: /mnt/data/videos/production_run_01.mp4
+
+    # Load the entire video as a list of frames or just metadata
+    load_type: full
+
+    # Optional parameters for write (used if connector.write is called)
+    codec: "mp4v"
+    fps: 30.0
+
+  # --- 3. STATIC CONNECTOR: DICOMConnector (GCS Storage) ---
+  - type: dicom
+    # Schema: DICOMConnectorConfig
+
+    # [Hardening/Security] URI must be S3/GCS or local path for PHI compliance.
+    uri: gs://cvf-medical-data/scans/patient_x/
+
+    # [Security] If True, trigger PHI scrubbing during read (DICOMConnector.read).
+    anonymize_phi: true
+
+    # File format for persistence of extracted features/metadata
+    output_format: parquet
+
+  # --- 4. STREAM CONNECTOR: KafkaConnector (Input Stream) ---
+  - type: kafka
+    # Schema: KafkaConnectorConfig
+
+    # [REQUIRED] Placeholder URI (not strictly used by KafkaConnector, but required by BaseConnectorConfig)
+    uri: kafka://production-brokers/
+
+    # [REQUIRED] List of broker addresses
+    bootstrap_servers: ["kafka-broker-1:9092", "kafka-broker-2:9092"]
+
+    # [REQUIRED] Topic to consume from
+    input_topic: "cvf_inference_results_feedback"
+
+    # [REQUIRED] Consumer Group ID
+    group_id: "cvf-retraining-pipeline"
+
+    # Configuration for the internal confluent_kafka Producer/Consumer
+    consumer_config:
+      auto.offset.reset: "earliest"
+      session.timeout.ms: 10000
+    producer_config:
+      retries: 5
+
+  # --- 5. STREAM CONNECTOR: CameraStreamConnector (Real-time Input) ---
+  - type: camera
+    # Schema: CameraConnectorConfig
+
+    # [REQUIRED] Source index (0, 1, ...) or RTSP URL
+    uri: rtsp://camera.factory.com/stream_1
+    source: 0
+
+    # [Hardening/Performance] Max FPS to process (enforced by Pydantic)
+    fps_limit: 15
+
+    # Output configuration if the stream is being recorded/produced
+    output_path: /tmp/recorded_stream_output.avi
+    output_config:
+      codec: "XVID"
+      fps: 15.0
+
+  # --- 6. STATIC CONNECTOR: APIConnector (External Metadata Fetch) ---
+  - type: api
+    # Schema: APIConnectorConfig
+
+    # [REQUIRED] Base URL (must be HTTPS in production)
+    uri: https://external-label-service.com/api/v1
+
+    # Authentication (Handled in APIConnector.connect)
+    auth_method: bearer
+
+    # [Hardening/Reliability] Connection timeout (enforced by Pydantic)
+    timeout_seconds: 5
+
+    # Custom configuration parameters used by the APIConnector
+    config:
+      base_url: "https://external-label-service.com/api/v1"
+      token: "ENV_VAR_API_TOKEN" # Should be loaded from secrets manager
