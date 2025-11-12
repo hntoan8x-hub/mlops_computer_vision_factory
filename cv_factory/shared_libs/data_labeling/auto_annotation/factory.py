@@ -8,6 +8,9 @@ from .classification_proposal import ClassificationProposalAnnotator
 from .segmentation_proposal import SegmentationProposalAnnotator 
 from .ocr_proposal import OCRProposalAnnotator 
 from .embedding_proposal import EmbeddingProposalAnnotator 
+from .depth_proposal import DepthProposalAnnotator               # <<< IMPORT MỚI >>>
+from .pointcloud_proposal import PointCloudProposalAnnotator     # <<< IMPORT MỚI >>>
+from .keypoint_proposal import KeypointProposalAnnotator         # <<< IMPORT MỚI >>>
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +18,6 @@ class AutoAnnotatorFactory:
     """
     Factory class responsible for creating concrete instances of BaseAutoAnnotator 
     based on the specified domain/task type.
-    
-    This centralizes the instantiation logic for all auto-labeling proposal mechanisms.
     """
     
     AUTO_ANNOTATOR_MAPPING: Dict[str, Type[BaseAutoAnnotator]] = {
@@ -25,6 +26,9 @@ class AutoAnnotatorFactory:
         "segmentation": SegmentationProposalAnnotator,
         "ocr": OCRProposalAnnotator,
         "embedding": EmbeddingProposalAnnotator,
+        "depth_estimation": DepthProposalAnnotator,           # <<< ĐĂNG KÝ MỚI >>>
+        "pointcloud_processing": PointCloudProposalAnnotator, # <<< ĐĂNG KÝ MỚI >>>
+        "keypoint_estimation": KeypointProposalAnnotator,     # <<< ĐĂNG KÝ MỚI >>>
     }
 
     @staticmethod

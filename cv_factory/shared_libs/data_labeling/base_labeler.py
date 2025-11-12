@@ -1,4 +1,4 @@
-# shared_libs/data_labeling/base_labeler.py (Hardened)
+# shared_libs/data_labeling/base_labeler.py (UPDATED)
 
 from abc import ABC, abstractmethod
 import logging
@@ -6,9 +6,7 @@ from typing import Any, Dict, List, Union, Optional
 from pydantic import ValidationError
 from torch import Tensor
 
-# Import config schema để validate đầu vào
 from ..data_labeling.configs.labeler_config_schema import LabelerConfig 
-# Import Connector Factory để đọc file nhãn
 from ..data_ingestion.factories.connector_factory import ConnectorFactory 
 
 logger = logging.getLogger(__name__)
@@ -19,12 +17,6 @@ class BaseLabeler(ABC):
     
     Defines the contract for loading, validating, and standardizing labels. 
     It handles configuration validation and acts as a facade for accessing data connectors.
-
-    Attributes:
-        labeler_id (str): Unique ID for the Labeler.
-        raw_config (Dict[str, Any]): The raw configuration input.
-        validated_config (Optional[LabelerConfig]): The validated Pydantic configuration.
-        raw_labels (List[Dict[str, Any]]): List of loaded, parsed, and standardized labels (Dict format).
     """
     
     def __init__(self, connector_id: str, config: Dict[str, Any]):
@@ -32,8 +24,8 @@ class BaseLabeler(ABC):
         Initializes BaseLabeler.
 
         Args:
-            connector_id: Unique ID for the Labeler (usually the task name).
-            config: Raw configuration, which will be validated via Pydantic.
+            connector_id (str): Unique ID for the Labeler (usually the task name).
+            config (Dict[str, Any]): Raw configuration, which will be validated via Pydantic.
         """
         self.labeler_id = connector_id
         self.raw_config = config
@@ -52,7 +44,6 @@ class BaseLabeler(ABC):
             ValueError: If the configuration fails Pydantic validation.
         """
         try:
-            # Hardening: Validate structure and semantic rules (task_type vs. params)
             self.validated_config = LabelerConfig(**self.raw_config)
             logger.info(f"[{self.labeler_id}] Configuration validated successfully.")
         except ValidationError as e:
@@ -80,7 +71,7 @@ class BaseLabeler(ABC):
         (e.g., checking if the image path exists, BBox semantic validity).
         
         Args:
-            sample: A single label sample (Dict format).
+            sample (Dict[str, Any]): A single label sample (Dict format).
             
         Returns:
             bool: True if the sample is valid for use in training.
@@ -93,7 +84,7 @@ class BaseLabeler(ABC):
         Standardizes the processed label data into PyTorch Tensor(s) ready for DataLoader.
         
         Args:
-            label_data: The standardized label data.
+            label_data (Any): The standardized label data.
             
         Returns:
             Union[Tensor, Dict[str, Tensor]]: Tensor or Dictionary of Tensors.
@@ -120,19 +111,14 @@ class BaseLabeler(ABC):
         
         # Hardening: Use simple heuristic to select the connector type
         if source_uri.startswith("s3://") or source_uri.startswith("gs://"):
-            connector_type = "image" # Use ImageConnector for S3/GCS file reads
+            connector_type = "image" # Default to image connector for cloud file reads
         elif source_uri.startswith("http://") or source_uri.startswith("https://"):
              connector_type = "api" # Use API Connector
         else:
             connector_type = "image" # Default to ImageConnector for local file/path reads
             
-        # Connector config needs to include necessary params like credentials if S3
-        # Since we use the raw config for connector creation in Data Ingestion,
-        # we pass the relevant part of the validated config.
-        
         return self.connector_factory.get_connector(
             connector_type=connector_type,
-            # NOTE: Passing the params of the specific LabelerConfig to satisfy connector __init__
             connector_config=self.validated_config.params.model_dump(), 
             connector_id=f"{self.labeler_id}_label_reader"
         )

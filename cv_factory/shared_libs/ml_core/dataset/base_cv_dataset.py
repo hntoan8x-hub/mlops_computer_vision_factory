@@ -1,4 +1,4 @@
-# cv_factory/shared_libs/ml_core/data/base_cv_dataset.py
+# cv_factory/shared_libs/ml_core/dataset/base_cv_dataset.py
 
 import abc
 from typing import Any, Dict, List, Optional, Union

@@ -1,0 +1,33 @@
+# semi_annotation_config.yaml - Blueprint cho Human-in-the-Loop (HITL) Workflow
+
+hitl_workflow:
+  # --- 1. REFINE/FINALIZATION STEP (Giai đoạn I: Xử lý đề xuất từ Auto Annotator) ---
+  finalization_method:
+    method_type: "refinement"
+    description: "Lọc ngưỡng tự động và chấp nhận/từ chối phản hồi của con người."
+
+    # Cấu hình ngưỡng để lọc đề xuất tự động (proposals)
+    config:
+      # Ngưỡng tin cậy tối thiểu để đề xuất được coi là "đã hoàn thiện" (sau NMS)
+      final_threshold: 0.95
+      # Có áp dụng NMS (Non-Maximum Suppression) tự động trước khi gửi đến người dùng không
+      apply_nms: true
+      # Cấu hình cụ thể cho NMS (ví dụ: ngưỡng IoU)
+      nms_iou_threshold: 0.5
+
+  # --- 2. ACTIVE LEARNING STEP (Giai đoạn II: Lựa chọn mẫu cho vòng tiếp theo) ---
+  selection_method:
+    method_type: "active_learning"
+    description: "Chọn các mẫu có thông tin lớn nhất để giảm chi phí gán nhãn."
+
+    config:
+      # Kích thước lô (batch size) được chọn cho vòng gán nhãn tiếp theo
+      selection_size: 500
+
+      # Chiến lược chọn mẫu Active Learning
+      # Lựa chọn: "uncertainty", "diversity", "random"
+      method: "uncertainty"
+
+      # Tham số bổ sung cho Diversity Sampling (nếu 'method' là 'diversity')
+      clustering_algorithm: "k-means"
+      embedding_key: "feature_vector_512" # Tên key trong pool_metadata chứa embedding

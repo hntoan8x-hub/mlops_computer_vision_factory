@@ -2,6 +2,9 @@
 
 from pydantic import Field, validator, BaseModel, constr, NonNegativeInt
 from typing import List, Dict, Any, Union, Literal, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Assuming BaseConfig is available
 class BaseConfig(BaseModel):
@@ -30,7 +33,7 @@ class ModelConfig(BaseConfig):
     weights_uri: Optional[str] = Field(None, description="URI or name/version if weights_source is 'mlflow_registry' or 'local_file'.")
     
     # 3. Task and Output
-    task_type: Literal["classification", "detection", "segmentation", "embedding"] = Field(
+    task_type: Literal["classification", "detection", "segmentation", "embedding", "depth_estimation"] = Field( # <<< UPDATED >>>
         "classification", 
         description="The primary CV task this model is configured for."
     )
@@ -50,9 +53,17 @@ class ModelConfig(BaseConfig):
     def validate_task_specifics(cls, v, values):
         """Rule: Ensure num_classes is consistent with the task type."""
         num_classes = values.get('num_classes')
-        if v == "embedding" and num_classes is not None and num_classes > 0:
-            logger.warning(
-                f"Task '{v}' typically outputs a feature vector, not classes. 'num_classes' is irrelevant."
-            )
+        
+        # Rule for Regression Tasks (Depth Estimation, Embedding)
+        if v in ["embedding", "depth_estimation"] and num_classes is not None and num_classes > 0:
+            if v == "depth_estimation":
+                 logger.warning(
+                    f"Task '{v}' is a regression task, outputting a 1-channel depth map. 'num_classes' is irrelevant and will be ignored."
+                )
+            elif v == "embedding":
+                logger.warning(
+                    f"Task '{v}' typically outputs a feature vector, not classes. 'num_classes' is irrelevant."
+                )
+
         # Add rules for detection/segmentation output checks if needed
         return v

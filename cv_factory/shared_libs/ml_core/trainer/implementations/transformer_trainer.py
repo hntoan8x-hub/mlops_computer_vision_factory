@@ -3,102 +3,86 @@
 import logging
 import torch
 import torch.nn as nn
-import torch.nn.parallel
 from typing import Dict, Any, Optional
 
-# Using Hugging Face's transformers library for model loading
+# NOTE: Hugging Face specific components are now handled by the factory/model layer, 
+# not the trainer setup, but we keep the imports for type hinting clarity.
 from transformers import ViTForImageClassification, AdamW 
 
-from shared_libs.ml_core.trainer.base.base_cv_trainer import BaseCVTrainer
-from shared_libs.ml_core.trainer.utils import distributed_utils # DDP Utilities
+# Import the correct hardened base class
+from shared_libs.ml_core.trainer.base.base_distributed_trainer import BaseDistributedTrainer # <<< NEW INHERITANCE >>>
+from shared_libs.ml_core.trainer.utils import distributed_utils 
+
+# Import necessary Schemas for the explicit contract
+from shared_libs.ml_core.trainer.configs.trainer_config_schema import TrainerConfig 
+from shared_libs.ml_core.configs.model_config_schema import ModelConfig     
 
 logger = logging.getLogger(__name__)
 
-class TransformerTrainer(BaseCVTrainer):
+class TransformerTrainer(BaseDistributedTrainer): # <<< Inherits DDP setup and wrapping >>>
     """
     Concrete trainer for Vision Transformer (ViT) models, specifically designed for 
-    image classification and integrated with Distributed Data Parallel (DDP).
-    
-    This trainer handles training, evaluation, and distributed checkpointing 
-    for transformer-based models using standard Hugging Face components.
+    image classification. DDP, Optimizer, Scheduler, and Loss setup are handled 
+    by the hardened base classes using Pydantic schemas.
     """
 
-    def __init__(self, model: ViTForImageClassification, **kwargs: Dict[str, Any]):
+    def __init__(self, 
+                 model: nn.Module, # Use generic nn.Module for flexibility
+                 trainer_config: TrainerConfig,
+                 model_config: ModelConfig,     
+                 **kwargs: Dict[str, Any]):
         """
-        Initializes the TransformerTrainer.
-
-        Args:
-            model (ViTForImageClassification): The ViT model to be trained.
-            **kwargs: Configuration for the trainer, including 'learning_rate', 'loss_fn', etc.
+        Initializes the TransformerTrainer. 
+        BaseDistributedTrainer handles DDP, Optimizer, and Loss setup based on schemas.
         """
-        super().__init__(model, **kwargs)
+        # 1. Base Init: Handles device, optimizer, scheduler, loss (via BaseCVTrainer), 
+        # AND DDP setup/wrap (via BaseDistributedTrainer).
+        super().__init__(model, trainer_config, model_config, **kwargs)
         
-        # 1. SETUP DISTRIBUTED ENVIRONMENT
-        distributed_utils.setup_distributed_environment() 
+        # NOTE: We no longer manually define self.optimizer or self.loss_fn here.
+        # They are correctly set by BaseCVTrainer using the validated schemas.
         
-        # 2. WRAP MODEL FOR DDP
-        # This handles moving the model to the correct local GPU and wrapping it for multi-GPU communication.
-        self.model = distributed_utils.wrap_model_for_distributed(self.model)
-        
-        # Configure Optimizer (Must be initialized AFTER DDP wrap, using self.model.parameters())
-        self.learning_rate = kwargs.get("learning_rate", 5e-5)
-        self.optimizer = AdamW(self.model.parameters(), lr=self.learning_rate)
-        
-        # Configure Loss Function
-        if 'loss_fn' not in kwargs:
-            self.loss_fn = torch.nn.CrossEntropyLoss()
-            
         if distributed_utils.is_main_process():
-            logger.info("TransformerTrainer initialized with AdamW, CrossEntropyLoss, and DDP setup.")
+            # Log successful initialization after all setup is complete
+            logger.info(f"TransformerTrainer initialized. DDP status handled by parent. Optimizer: {type(self.optimizer).__name__}")
             
-            
-    def fit(self, train_loader: torch.utils.data.DataLoader, 
-            val_loader: Optional[torch.utils.data.DataLoader] = None, 
-            epochs: int = 10) -> None:
-        """
-        Executes the main training loop.
+    # Implementation of the abstract method from BaseDistributedTrainer
+    def _run_epoch(self, train_loader: torch.utils.data.DataLoader, 
+                   val_loader: Optional[torch.utils.data.DataLoader], 
+                   epoch: int, 
+                   total_epochs: int) -> None:
+        """Runs the core training and evaluation loop for a single epoch."""
 
-        Args:
-            train_loader (DataLoader): DataLoader for the training data (must use DistributedSampler).
-            val_loader (Optional[DataLoader]): DataLoader for validation.
-            epochs (int): Number of training epochs.
-        """
-        # Set epoch for DistributedSampler to ensure correct data shuffling for each epoch
-        if distributed_utils.get_world_size() > 1 and hasattr(train_loader.sampler, 'set_epoch'):
-            train_loader.sampler.set_epoch(epochs) 
-            
         self.model.train()
-        for epoch in range(epochs):
-            for i, batch in enumerate(train_loader):
-                # Data to Device
-                inputs = batch['pixel_values'].to(self.device)
-                labels = batch['labels'].to(self.device)
-                
-                self.optimizer.zero_grad()
-                
-                # Forward pass: Hugging Face models typically return an output object
-                outputs = self.model(pixel_values=inputs, labels=labels)
-                loss = outputs.loss
-                
-                loss.backward()
-                self.optimizer.step()
-                
-                # Logging: Only main process logs progress to avoid log spam/conflicts
-                if (i + 1) % 100 == 0 and distributed_utils.is_main_process():
-                    logger.info(f"Epoch [{epoch+1}/{epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}")
+        for i, batch in enumerate(train_loader):
+            # Data to Device (Assumes Hugging Face dataloader output format)
+            inputs = batch['pixel_values'].to(self.device)
+            # Labels might be missing in some Hugging Face dataloaders, check for presence
+            labels = batch['labels'].to(self.device) if 'labels' in batch else None 
             
-            if val_loader:
-                self.evaluate(val_loader)
+            self.optimizer.zero_grad()
+            
+            # Forward pass: Hugging Face models typically return an output object
+            # Pass labels only if available and needed for integrated loss calculation
+            outputs = self.model(pixel_values=inputs, labels=labels)
+            
+            # Use integrated loss if available (typical for HF models) or use self.loss_fn
+            loss = outputs.loss if hasattr(outputs, 'loss') and outputs.loss is not None else self.loss_fn(outputs.logits, labels)
+            
+            loss.backward()
+            self.optimizer.step()
+            
+            # Logging: Only main process logs progress
+            if (i + 1) % 100 == 0 and distributed_utils.is_main_process():
+                logger.info(f"Epoch [{epoch+1}/{total_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}")
+        
+        if val_loader:
+            self.evaluate(val_loader)
+
 
     def evaluate(self, test_loader: torch.utils.data.DataLoader) -> Dict[str, Any]:
         """
         Evaluates the model on the test set and aggregates metrics across all processes.
-
-        Args:
-            test_loader (DataLoader): DataLoader for the test/validation data.
-            
-        Returns:
-            Dict[str, Any]: Aggregated evaluation metrics (only returned by the main process).
         """
         self.model.eval()
         
@@ -116,14 +100,12 @@ class TransformerTrainer(BaseCVTrainer):
                 loss = outputs.loss
                 total_loss += loss.item()
                 
-                # Prediction calculation
                 _, predicted = torch.max(outputs.logits.data, 1)
                 
-                # Accumulate totals
                 total += labels.size(0)
                 correct += (predicted == labels).sum()
 
-        # 1. AGGREGATION: Reduce/Sum values from all processes
+        # AGGREGATION: Reduce/Sum values from all processes
         if distributed_utils.get_world_size() > 1:
             distributed_utils.reduce_tensor_across_processes(total_loss, op=torch.distributed.ReduceOp.SUM)
             distributed_utils.reduce_tensor_across_processes(correct, op=torch.distributed.ReduceOp.SUM)
@@ -131,7 +113,7 @@ class TransformerTrainer(BaseCVTrainer):
         
         metrics = {}
         if distributed_utils.is_main_process():
-            # 2. FINAL CALCULATION ON RANK 0
+            # FINAL CALCULATION ON RANK 0
             accuracy = 100 * correct.item() / total.item()
             avg_loss = total_loss.item() / len(test_loader)
             
@@ -140,45 +122,19 @@ class TransformerTrainer(BaseCVTrainer):
             
         return metrics
 
-    def save_checkpoint(self, path: str) -> None:
-        """
-        Saves the model and optimizer state. Only executed by the main process (Rank 0).
+    # NOTE: train_step abstract method needs definition:
+    def train_step(self, *args, **kwargs) -> Dict[str, Any]:
+         raise NotImplementedError("TransformerTrainer handles training via _run_epoch method.")
 
-        Args:
-            path (str): The file path where the checkpoint should be saved.
-        """
+    # --- CHECKPOINTING (DELEGATED TO PARENT) ---
+    # We remove the local save/load methods and enforce usage of BaseCVTrainer's logic.
+    def save_checkpoint(self, path: str) -> None:
+        """Saves checkpoint, executed by Rank 0 only, ensuring DDP model unwrapping."""
         if distributed_utils.is_main_process():
-            # Unwrap DDP model to save only the original state_dict (.module)
-            model_to_save = self.model.module if isinstance(self.model, torch.nn.parallel.DistributedDataParallel) else self.model
-            
-            state = {
-                'model_state_dict': model_to_save.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-            }
-            torch.save(state, path)
-            logger.info(f"Transformer model checkpoint saved by Rank 0 to {path}")
-        
-        # BARRIER: All processes wait until the main process finishes saving
+            super().save(path)
         distributed_utils.synchronize_between_processes("save_checkpoint")
 
     def load_checkpoint(self, path: str) -> None:
-        """
-        Loads the model and optimizer state on all ranks.
-
-        Args:
-            path (str): The file path to the checkpoint.
-        """
-        # Map location ensures the checkpoint is loaded directly onto the current GPU
-        map_location = {'cuda:%d' % 0: 'cuda:%d' % distributed_utils.get_rank()} 
-        
-        # Determine which model object to load the state into (the unwrapped one)
-        model_to_load = self.model.module if isinstance(self.model, torch.nn.parallel.DistributedDataParallel) else self.model
-        
-        state = torch.load(path, map_location=map_location)
-        model_to_load.load_state_dict(state['model_state_dict'])
-        self.optimizer.load_state_dict(state['optimizer_state_dict'])
-        
-        logger.info(f"Checkpoint loaded by Rank {distributed_utils.get_rank()}.")
-
-        # BARRIER: All processes wait until all ranks have loaded the checkpoint
+        """Loads checkpoint across all ranks, ensuring proper device mapping."""
+        super().load(path)
         distributed_utils.synchronize_between_processes("load_checkpoint")

@@ -11,9 +11,11 @@ from ..metrics.detection_metrics import mAPMetric
 # Import Metrics cho Segmentation
 from ..metrics.segmentation_metrics import DiceCoefficientMetric, MeanIoUMetric
 # Import Metrics cho OCR
-from ..metrics.ocr_metrics import CharacterErrorRateMetric # Giả định file này chứa CER/WER
+from ..metrics.ocr_metrics import CharacterErrorRateMetric 
 # Import Metrics cho Embedding
 from ..metrics.embedding_metrics import RecallAtKMetric
+# --- IMPORT MỚI CHO DEPTH ESTIMATION ---
+from ..metrics.depth_metrics import AbsRelMetric, ThresholdAccuracyMetric
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +40,14 @@ class MetricFactory:
         
         # OCR
         "cer": CharacterErrorRateMetric,
-        # "wer": WordErrorRateMetric, # Thêm vào nếu có
         
         # Embedding/Retrieval
         "recall@k": RecallAtKMetric,
+        
+        # --- MỚI: Depth Estimation ---
+        "abs_rel": AbsRelMetric, # Lưu trữ AbsRel, SqRel, RMSE
+        "delta_accuracy": ThresholdAccuracyMetric, # Lưu trữ Delta_1, Delta_2, Delta_3
+        # Lưu ý: Các tên metric khác (SqRel, RMSE) sẽ được truy cập qua khóa của AbsRelMetric.compute()
     }
 
     @staticmethod
@@ -64,7 +70,6 @@ class MetricFactory:
         MetricClass = MetricFactory.METRIC_MAPPING[metric_name]
         
         try:
-            # Khởi tạo metric, truyền tên và config
             return MetricClass(name=metric_name, config=config)
         except Exception as e:
             logger.error(f"Failed to instantiate Metric '{metric_name}': {e}")

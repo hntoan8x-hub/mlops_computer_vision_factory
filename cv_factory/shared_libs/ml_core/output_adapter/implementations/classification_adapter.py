@@ -19,7 +19,6 @@ class ClassificationAdapter(BaseOutputAdapter):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Validate và lấy params cụ thể
         self.adapter_config = OutputAdapterConfig(**config)
         self.params: ClassificationAdapterParams = self.adapter_config.params
         
@@ -33,7 +32,6 @@ class ClassificationAdapter(BaseOutputAdapter):
         if logits.ndim != 2:
             raise ValueError(f"Classification output must be 2D ([B, C]), received shape: {logits.shape}")
 
-        # Sử dụng cấu hình is_logits
         if self.params.is_logits:
             def softmax(x):
                 e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
@@ -41,8 +39,22 @@ class ClassificationAdapter(BaseOutputAdapter):
             probabilities = softmax(logits)
         else:
             probabilities = logits
-
-        # NOTE: Logic lọc theo confidence_threshold có thể được áp dụng ở đây
-        # hoặc thường được đẩy sang Domain Postprocessor/Metric.
         
         return probabilities
+
+    def adapt_targets(self, targets_tensor: torch.Tensor) -> np.ndarray:
+        """
+        Chuẩn hóa Ground Truth Classification Targets cho Metric.update().
+        
+        Args:
+            targets_tensor (torch.Tensor): Tensor Ground Truth thô (thường là LongTensor).
+            
+        Returns:
+            np.ndarray: NumPy array chứa chỉ số lớp (int64).
+        """
+        # Chuyển đổi sang NumPy và đảm bảo kiểu dữ liệu là int64 cho chỉ số lớp
+        targets_np = self._to_numpy(targets_tensor)
+        
+        # Nếu targets là List/Tuple (ví dụ: các nhãn không đồng nhất), cần xử lý thêm.
+        # Giả định targets_tensor là LongTensor/IntTensor
+        return targets_np.astype(np.int64)

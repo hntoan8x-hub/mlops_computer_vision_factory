@@ -1,0 +1,104 @@
+# labeling_project_config.yaml
+# Cấu hình toàn bộ dự án gán nhãn, bao gồm tất cả 8 loại Labeler.
+
+labeling_pipelines:
+  # --- 1. CLASSIFICATION LABELER (Manual Mode Example) ---
+  - task_type: "classification"
+    annotation_mode: "manual"
+    validation_ratio: 0.05
+    cache_path: "/data/cache/classification_labels.parquet"
+    params:
+      label_source_uri: "s3://raw-labels/master_classification_index.csv"
+      image_path_column: "image_uri"
+      label_column: "class_name_raw"
+      class_map_path: "/configs/class_maps/imagenet_map.json"
+
+  # --- 2. DETECTION LABELER (Semi-Annotation Mode Example) ---
+  - task_type: "detection"
+    annotation_mode: "semi"
+    validation_ratio: 0.02
+    params:
+      label_source_uri: "/local/data/coco_annotations_v1.json"
+      input_format: "coco_json"
+      normalize_bbox: true
+
+    # Cấu hình cho Semi-Annotation
+    semi_annotation:
+      method_type: "refinement"
+      config:
+        final_threshold: 0.95
+        # Các tham số cho Refinement (ví dụ: NMS)
+        nms_iou_threshold: 0.6
+
+    # Cấu hình cho Auto Annotation (dùng để sinh proposals)
+    auto_annotation:
+      annotator_type: "detection"
+      config:
+        model_path: "s3://models/faster_rcnn_proposal.pth"
+        min_confidence: 0.8
+
+  # --- 3. SEGMENTATION LABELER (Manual Mode Example) ---
+  - task_type: "segmentation"
+    annotation_mode: "manual"
+    params:
+      label_source_uri: "db://label_db/segmentation_v2" # Ví dụ kết nối Database
+      mask_encoding: "png_mask" # Chỉ định format mask file (PNG)
+
+  # --- 4. OCR LABELER (Auto Mode Example) ---
+  - task_type: "ocr"
+    annotation_mode: "auto"
+    params:
+      label_source_uri: "s3://raw-data/ocr_metadata.csv" # Chỉ tải metadata
+      max_sequence_length: 512
+      padding_token: "<PAD>"
+      tokenizer_config:
+        vocab_size: 10000
+        type: "bert"
+
+    # Cấu hình cho Auto Annotation (Model sinh OCR output)
+    auto_annotation:
+      annotator_type: "ocr"
+      config:
+        model_path: "/local/models/transformer_ocr.onnx"
+        min_confidence: 0.95
+
+  # --- 5. EMBEDDING LABELER (Manual Mode Example) ---
+  - task_type: "embedding"
+    annotation_mode: "manual"
+    params:
+      label_source_uri: "gcs://metadata/face_ids_and_vectors.csv"
+      vector_dim: 1024 # Kích thước vector đặc trưng
+
+  # --- 6. DEPTH ESTIMATION LABELER (Manual Mode Example) ---
+  - task_type: "depth_estimation"
+    annotation_mode: "manual"
+    params:
+      label_source_uri: "/local/index/depth_map_paths.csv"
+      image_path_column: "rgb_path"
+      depth_path_column: "depth_16bit_path"
+      depth_scale_factor: 1000.0 # Chuyển đổi từ milimet sang mét
+
+  # --- 7. POINT CLOUD LABELER (Semi-Annotation Mode Example) ---
+  - task_type: "pointcloud_processing"
+    annotation_mode: "semi"
+    validation_ratio: 0.01
+    params:
+      label_source_uri: "s3://3d-data/kitti_annotation_index.json"
+      input_format: "kitti_3d"
+      normalize_coordinates: false
+
+    # Cấu hình Active Learning cho 3D
+    semi_annotation:
+      method_type: "active_learning"
+      config:
+        selection_size: 200
+        method: "diversity"
+        embedding_key: "pcd_embedding_1024" # Key chứa feature vector 3D trong metadata
+
+  # --- 8. KEYPOINT ESTIMATION LABELER (Manual Mode Example) ---
+  - task_type: "keypoint_estimation"
+    annotation_mode: "manual"
+    params:
+      label_source_uri: "/local/annotations/coco_keypoints.json"
+      num_keypoints: 17 # Chuẩn COCO (17 khớp)
+      visibility_key: "visibility_status"

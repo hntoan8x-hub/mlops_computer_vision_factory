@@ -1,5 +1,4 @@
-# cv_factory/shared_libs/orchestrators/cv_inference_orchestrator.py
-
+# cv_factory/shared_libs/orchestrators/cv_inference_orchestrator.py (HARDENED)
 
 import logging
 from typing import Dict, Any, Union, List
@@ -15,20 +14,19 @@ from shared_libs.orchestrators.utils.orchestrator_monitoring import measure_orch
 from shared_libs.orchestrators.utils.orchestrator_exceptions import InvalidConfigError, WorkflowExecutionError 
 from shared_libs.ml_core.configs.orchestrator_config_schema import InferenceOrchestratorConfig 
 
-# NOTE: We assume the BaseOrchestrator handles initialization of its logger instance (self.logger)
+logger = logging.getLogger(__name__)
 
 class CVInferenceOrchestrator(BaseOrchestrator):
     """
     Orchestrates the model inference pipeline for batch or single-request CV models.
     
-    This class acts as a thin facade, utilizing the injected BaseCVPredictor, 
-    enforcing Pydantic configuration validation, and integrating Prometheus monitoring.
+    HARDENED: Accepts an injected BaseCVPredictor instance that MUST be pre-loaded.
     """
     
     def __init__(self, 
                  orchestrator_id: str, 
                  config: Dict[str, Any], 
-                 predictor: BaseCVPredictor,
+                 predictor: BaseCVPredictor, # <<< INJECTED PREDICTOR >>>
                  logger_service: BaseTracker,
                  event_emitter: Any):
         """
@@ -40,15 +38,11 @@ class CVInferenceOrchestrator(BaseOrchestrator):
         self.config = config
         self.predictor = predictor # Store the injected dependency
 
-        # 2. Enforce Model Loading (Lifecycle Management)
+        # 2. Enforce Model Loading Check (Lifecycle Management)
+        # CRITICAL: CHỈ KIỂM TRA, KHÔNG TỰ LOAD. Trách nhiệm Load thuộc về CVPipelineFactory.
         if not self.predictor.is_loaded:
-            self.logger.info("Predictor model not yet loaded. Attempting to load from config...")
-            model_uri = self.config.get('model', {}).get('uri')
-            if model_uri:
-                self.predictor.load_model(model_uri)
-            else:
-                # CRITICAL: Throw runtime error if no model source is configured
-                raise RuntimeError("Predictor must be loaded or configured with a model URI before running.")
+            self.logger.critical("Injected Predictor model is NOT loaded. This is a configuration error.")
+            raise RuntimeError("Injected Predictor model must be loaded by the Factory before Orchestrator initialization.")
         
         self.logger.info(f"[{self.orchestrator_id}] CV Inference Orchestrator initialized and model is ready.")
 
@@ -56,26 +50,20 @@ class CVInferenceOrchestrator(BaseOrchestrator):
     
     def validate_config(self, config: Dict[str, Any]) -> None:
         """
-        [IMPLEMENTED] Validates the configuration using the Pydantic schema 
-        (Enforces Quality Gate).
-        
-        Raises:
-            InvalidConfigError: If the configuration is invalid.
+        Validates the configuration using the Pydantic schema (Enforces Quality Gate).
         """
         try:
-            # Enforce validation against the strict schema
             InferenceOrchestratorConfig(**config) 
             self.logger.info("Configuration validated successfully against InferenceOrchestratorConfig schema.")
         except Exception as e:
-            # CRITICAL: Raise the custom exception for clean error handling
             self.logger.error(f"Invalid inference configuration detected: {e}")
             self.emit_event(event_name="config_validation_failure", payload={"error": str(e)})
             raise InvalidConfigError(f"Inference config validation failed: {e}") from e
 
-    @measure_orchestrator_latency(orchestrator_type="CVInference") # Apply Monitoring Decorator
+    @measure_orchestrator_latency(orchestrator_type="CVInference") 
     def run(self, inputs: Union[np.ndarray, List[np.ndarray], List[Dict[str, Any]]]) -> List[PredictionOutput]:
         """
-        [IMPLEMENTED] Runs the full inference workflow on the given input data (Batch or Single Request).
+        Runs the full inference workflow on the given input data (Batch or Single Request).
         """
         self.logger.info(f"[{self.orchestrator_id}] Starting batch CV inference orchestration.")
         
@@ -100,7 +88,6 @@ class CVInferenceOrchestrator(BaseOrchestrator):
                 final_predictions.append(prediction_result)
 
         except Exception as e:
-            # CRITICAL: Wrap exception in WorkflowExecutionError for upstream handling
             error_msg = f"Inference pipeline failed: {type(e).__name__}"
             self.logger.error(f"[{self.orchestrator_id}] {error_msg}", exc_info=True)
             self.emit_event(event_name="inference_failure", payload={"error": error_msg, "orchestrator_id": self.orchestrator_id})

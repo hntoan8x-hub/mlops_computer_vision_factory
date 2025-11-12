@@ -1,4 +1,4 @@
-# scripts/cleanup_artifacts.py
+# scripts/cleanup_artifacts.py (HARDENED)
 
 import argparse
 import logging
@@ -7,8 +7,7 @@ import json
 from typing import Dict, Any
 
 # --- Import các thành phần Cốt lõi ---
-from shared_libs.ml_core.mlflow_service.implementations.mlflow_registry import MLflowRegistry as MockRegistry # Registry Service
-from shared_libs.ml_core.mlflow_service.implementations.mlflow_logger import MLflowLogger as MockLogger # Tracker Service
+from shared_libs.orchestrators.pipeline_runner import PipelineRunner # <<< SỬ DỤNG RUNNER >>>
 
 # --- Cấu hình Logging Cơ bản ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -19,6 +18,8 @@ def main():
     Hàm chính thực thi luồng dọn dẹp tài nguyên (Cleanup Artifacts).
     """
     parser = argparse.ArgumentParser(description="Dọn dẹp các phiên bản mô hình và artifacts cũ.")
+    parser.add_argument("--config", type=str, required=True, 
+                        help="Đường dẫn đến file cấu hình MLOps/Cleanup.")
     parser.add_argument("--model-name", type=str, required=True, 
                         help="Tên mô hình cần dọn dẹp (ví dụ: defect_detector).")
     parser.add_argument("--keep-latest", type=int, default=5, 
@@ -28,11 +29,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        # 1. Khởi tạo Registry Service (Mock/Real)
-        registry_service = MockRegistry()
-        logger.info(f"Starting cleanup process for model: {args.model_name}")
+        # 1. Khởi tạo Services qua Runner (Hardening)
+        # Runner sẽ trả về các Contracts BaseTracker và BaseRegistry
+        tracker_service, registry_service = PipelineRunner.create_mlops_services(args.config)
+        logger.info(f"Starting cleanup process for model: {args.model-name}")
 
-        # --- A. Cleanup Model Registry ---
+        # --- A. Cleanup Model Registry (Sử dụng Contract đã tiêm) ---
         
         logger.info(f"  1. Cleaning up Model Registry: Keeping {args.keep_latest} latest versions.")
         
@@ -40,10 +42,10 @@ def main():
         # registry_service.archive_old_versions(args.model_name, keep_count=args.keep_latest)
         logger.warning("Simulating: Archiving versions older than version_N-5.")
         
-        # --- B. Cleanup MLflow Runs / Artifacts ---
+        # --- B. Cleanup MLflow Runs / Artifacts (Sử dụng Contract đã tiêm) ---
         
         logger.info(f"  2. Cleaning up MLflow Runs older than {args.cleanup_runs_older_than_days} days.")
-        tracker_service = MockLogger() # Dùng tracker service để xóa runs
+        # MÔ PHỎNG: Dùng hàm của Tracker Service để xóa runs
         # tracker_service.delete_expired_runs(days=args.cleanup_runs_older_than_days)
         logger.warning(f"Simulating: Deleting runs older than {args.cleanup_runs_older_than_days} days.")
 

@@ -70,6 +70,46 @@ class EmbeddingLabelerConfig(BaseModel):
     label_source_uri: str = Field(..., description="URI of the file containing target IDs and/or clustering info.")
     vector_dim: conint(gt=1) = Field(512, description="Expected dimension of the embedding vector.")
 
+class DepthLabelerConfig(BaseModel):
+    """
+    Configuration for DepthLabeler.
+
+    Attributes:
+        label_source_uri: URI/path of the raw depth map file (e.g., depth_16bit.png).
+        image_path_column: Column name containing source RGB image paths.
+        depth_path_column: Column name containing depth map paths.
+        depth_scale_factor: Factor to convert raw pixel value to meters (e.g., 1000 for mm to m).
+    """
+    label_source_uri: str = Field(..., description="URI/path of the label file (e.g., index CSV).")
+    image_path_column: str = Field("image_path", description="Column name containing source RGB image paths.")
+    depth_path_column: str = Field("depth_path", description="Column name containing raw depth map paths.")
+    depth_scale_factor: confloat(gt=0) = Field(1.0, description="Factor to convert raw depth pixel value to meters.")
+
+class PointCloudLabelerConfig(BaseModel):
+    """
+    Configuration for PointCloudLabeler (3D Detection/Segmentation).
+
+    Attributes:
+        label_source_uri: URI/path of the label file (e.g., KITTI format, or index JSON).
+        input_format: Format of the 3D label ("kitti_3d", "nuscenes_json", "raw_points").
+        normalize_coordinates: If True, normalize 3D BBox/Point coordinates.
+    """
+    label_source_uri: str = Field(..., description="URI/path of the label file.")
+    input_format: Literal["kitti_3d", "nuscenes_json", "raw_points"] = Field("kitti_3d", description="Format of the input 3D label file.")
+    normalize_coordinates: bool = Field(False, description="Normalize 3D BBox/Point coordinates.")
+
+class KeypointLabelerConfig(BaseModel):
+    """
+    Configuration for KeypointLabeler (Pose Estimation).
+
+    Attributes:
+        label_source_uri: URI/path of the keypoint annotation file (e.g., COCO format).
+        num_keypoints: Total number of keypoints expected (e.g., 17 for COCO human pose).
+        visibility_key: Name of the key containing visibility status (0, 1, 2).
+    """
+    label_source_uri: str = Field(..., description="URI/path of the keypoint annotation file.")
+    num_keypoints: conint(gt=0) = Field(17, description="Total number of keypoints expected.")
+    visibility_key: str = Field("keypoint_visibility", description="Key for visibility status in annotation data.")
 
 # --- 2. Main Config Schema: General structure for Labeling Task ---
 
@@ -87,9 +127,10 @@ class LabelerConfig(BaseModel):
         cache_path: Optional path to cache loaded and standardized labels.
     """
     
-    task_type: Literal["classification", "detection", "segmentation", "ocr", "embedding"] = Field(
-        ..., description="The CV task type (e.g., classification, detection)."
-    )
+    task_type: Literal[
+        "classification", "detection", "segmentation", "ocr", "embedding", 
+        "depth_estimation", "pointcloud_processing", "keypoint_estimation" # <<< BỔ SUNG >>>
+    ] = Field(..., description="The CV task type.")
     
     # Union includes all specific config schemas
     params: Union[
@@ -97,24 +138,24 @@ class LabelerConfig(BaseModel):
         DetectionLabelerConfig,
         OCRLabelerConfig,
         SegmentationLabelerConfig, 
-        EmbeddingLabelerConfig
+        EmbeddingLabelerConfig,
+        DepthLabelerConfig,           # <<< BỔ SUNG >>>
+        PointCloudLabelerConfig,      # <<< BỔ SUNG >>>
+        KeypointLabelerConfig
+        
     ] = Field(..., description="Detailed configuration specific to the task type.")
     
     validation_ratio: confloat(ge=0, le=1) = Field(0.01, description="Ratio of label samples to be randomly checked (validation).")
     cache_path: Optional[str] = Field(None, description="Path to cache loaded labels (e.g., as Parquet).")
     
     class Config:
-        """Pydantic configuration."""
-        # Hardening: Forbid extra fields for strict configuration
         extra = "forbid" 
         
     @root_validator(pre=True)
     def validate_params_type_match(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Rule: Enforce that the 'params' dictionary matches the structure 
-        required by the declared 'task_type'. (Semantic Validation)
-        
-        This overrides Pydantic's default Union behavior to guarantee semantic consistency.
+        required by the declared 'task_type'.
         """
         task_type = values.get('task_type')
         params_dict = values.get('params')
@@ -122,28 +163,29 @@ class LabelerConfig(BaseModel):
         if not task_type or not params_dict:
             return values
 
+        # SỬA: Cập nhật type_map
         type_map: Dict[str, Type[BaseModel]] = {
             "classification": ClassificationLabelerConfig,
             "detection": DetectionLabelerConfig,
             "segmentation": SegmentationLabelerConfig,
             "ocr": OCRLabelerConfig,
             "embedding": EmbeddingLabelerConfig,
+            "depth_estimation": DepthLabelerConfig,          # <<< BỔ SUNG >>>
+            "pointcloud_processing": PointCloudLabelerConfig, # <<< BỔ SUNG >>>
+            "keypoint_estimation": KeypointLabelerConfig,     # <<< BỔ SUNG >>>
         }
 
         expected_type = type_map.get(task_type)
 
         if expected_type:
             try:
-                # Attempt to parse the raw 'params' dict into the expected specific model
                 expected_type(**params_dict)
             except ValidationError as e:
-                # If parsing fails, the structure is wrong for the task type
                 raise ValueError(
                     f"Configuration mismatch: task_type '{task_type}' requires '{expected_type.__name__}' "
                     f"structure in 'params', but validation failed: {e}"
                 )
         
-        # NOTE: Pydantic will handle the final conversion of 'params' to the Union type instance after this pre-validation.
         return values
 
 

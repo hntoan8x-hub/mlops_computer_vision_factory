@@ -1,87 +1,50 @@
-# cv_factory/shared_libs/inference/cv_predictor.py (UPDATED WITH ADAPTER LOGIC)
+# cv_factory/shared_libs/inference/cv_predictor.py (HARDENED - SRP Compliant)
 
 import logging
 from typing import Any, Dict, List, Union
 import numpy as np
 import warnings
 import torch 
-import base64 # Required for decoding API/Kafka input
-import io
-from PIL import Image # Required for decoding image bytes
+
 
 # --- Import Abstractions and Core Services ---
 from .base_cv_predictor import BaseCVPredictor, RawInput, ModelInput, PredictionOutput 
 from shared_libs.data_processing.orchestrators.cv_preprocessing_orchestrator import CVPreprocessingOrchestrator
-from shared_libs.ml_core.mlflow_service.implementations.mlflow_client_wrapper import MLflowClientWrapper 
+# THÊM: Import utility đã tách biệt
+from shared_libs.core_utils.image_decoding_utils import decode_base64_to_numpy 
 
 logger = logging.getLogger(__name__)
 
-# Helper function for decoding (mimicking core_utils.image_utils)
-def _decode_base64_to_numpy(base64_string: str) -> np.ndarray:
-    """Converts a base64 encoded string back into an RGB NumPy array."""
-    try:
-        # 1. Decode base64 to bytes
-        img_bytes = base64.b64decode(base64_string)
-        # 2. Open image from bytes stream using PIL
-        img_stream = io.BytesIO(img_bytes)
-        with Image.open(img_stream) as img:
-            # 3. Convert to RGB and then to NumPy array
-            return np.array(img.convert("RGB"))
-    except Exception as e:
-        raise ValueError(f"Base64 decoding or PIL conversion failed: {e}")
-
 class CVPredictor(BaseCVPredictor):
     """
-    A concrete implementation of BaseCVPredictor, now including the Adapter/Router 
-    logic within preprocess() to handle various raw data inputs (File, Stream, Base64).
+    A concrete implementation of BaseCVPredictor.
+    
+    HARDENED: Only handles the prediction pipeline (preprocess, predict, postprocess).
+    Model loading is delegated (via injected_model), and image decoding is delegated (via core_utils).
     """
 
-    def __init__(self, predictor_id: str, config: Dict[str, Any], postprocessor: Any):
-        # 1. Base Init (Handles DI for postprocessor and config validation)
-        super().__init__(predictor_id, config, postprocessor) 
+    def __init__(self, predictor_id: str, config: Dict[str, Any], postprocessor: Any, loaded_model: Any): 
+        # 1. Base Init (Tiêm postprocessor và model đã tải)
+        super().__init__(predictor_id, config, postprocessor, loaded_model) 
 
         self.model_config = self.config.get('model', {})
         self.preprocessing_config = self.config.get('preprocessing', {})
         
-        # 2. Initialize Preprocessing Orchestrator (Context must be 'inference')
+        # 2. Initialize Preprocessing Orchestrator
         self.preprocessor = CVPreprocessingOrchestrator(
             config=self.preprocessing_config,
             context='inference'
         )
         
-        self.mlflow_client = MLflowClientWrapper()
+        # Thiết bị được xác định trong quá trình tải model, nhưng cần để xử lý Tensor
         self.device = torch.device(self.model_config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         
     # --- BaseCVPredictor Contract Implementation ---
 
-    def load_model(self, model_uri: str) -> None:
-        """Loads the trained model artifact using the MLflow client."""
-        if self.is_loaded:
-            logger.info(f"[{self.predictor_id}] Model already loaded.")
-            return
-
-        logger.info(f"[{self.predictor_id}] Loading model from URI: {model_uri}")
-        
-        try:
-            self.model = self.mlflow_client.load_model(model_uri=model_uri)
-            
-            if isinstance(self.model, torch.nn.Module):
-                self.model.to(self.device)
-                self.model.eval()
-
-            self.is_loaded = True
-            logger.info(f"[{self.predictor_id}] Model loaded successfully on device: {self.device}")
-
-        except Exception as e:
-            self.is_loaded = False
-            logger.error(f"Failed to load model from {model_uri}: {e}")
-            raise RuntimeError(f"Model loading failed: {e}")
-
     def preprocess(self, raw_input: RawInput) -> ModelInput:
         """
-        Applies necessary transformations. This method now acts as the Adapter/Router 
-        to standardize input formats (Base64/JSON) into a NumPy array before 
-        calling the CVPreprocessingOrchestrator.
+        Applies necessary transformations, acting as the Adapter/Router 
+        to standardize input formats (Base64/JSON) into a NumPy array.
         """
         logger.debug(f"[{self.predictor_id}] Running preprocessing pipeline.")
         
@@ -89,20 +52,18 @@ class CVPredictor(BaseCVPredictor):
         image_data: Union[np.ndarray, List[np.ndarray], None] = None
         
         if isinstance(raw_input, (np.ndarray, list)):
-            # Case 1: Stream Connector (Camera) or Batch Connector (Video/Image) already provides NumPy/List[NumPy]
             image_data = raw_input
             logger.debug("Input type is native NumPy/List. Skipping Base64 decode.")
             
         elif isinstance(raw_input, dict):
-            # Case 2: API Connector or Kafka Message (JSON/Dict)
-            # Look for common keys containing Base64 data
             base64_string = raw_input.get('image_base64') or raw_input.get('data')
             if base64_string and isinstance(base64_string, str):
                 try:
-                    # Use the local helper function to decode
-                    image_data = _decode_base64_to_numpy(base64_string)
+                    # SỬ DỤNG UTILITY ĐÃ TÁCH BIỆT
+                    image_data = decode_base64_to_numpy(base64_string)
                     logger.info("Decoded Base64 input successfully.")
                 except Exception as e:
+                    # Reroute exception từ utility
                     raise ValueError(f"Input dictionary contains invalid Base64 image data: {e}") from e
             else:
                 raise ValueError("Input dictionary from API/Kafka does not contain valid Base64 image data.")
@@ -114,16 +75,10 @@ class CVPredictor(BaseCVPredictor):
              raise ValueError("Raw input was processed but resulted in None image data.")
         
         # --- 2. CORE PROCESSING DELEGATION ---
-        
-        # The Orchestrator now receives the standardized NumPy array
         processed_output = self.preprocessor.run(image_data)
         
         # --- 3. FRAMEWORK ADAPTER (FINAL STEP) ---
-        
-        # Final step to convert NumPy array to batched Tensor for PyTorch
         if isinstance(processed_output, np.ndarray):
-             # Add batch dimension and convert to PyTorch Tensor
-             # HWC -> CHW (permute), add Batch dimension (unsqueeze)
              tensor_input = torch.from_numpy(processed_output).permute(2, 0, 1).unsqueeze(0).float()
              return tensor_input.to(self.device)
              
@@ -131,7 +86,7 @@ class CVPredictor(BaseCVPredictor):
 
     def predict(self, model_input: ModelInput) -> Any:
         """
-        Performs the core model inference step. (Logic remains the same)
+        Performs the core model inference step.
         """
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
@@ -144,14 +99,14 @@ class CVPredictor(BaseCVPredictor):
                 if isinstance(self.model, torch.nn.Module):
                     raw_output = self.model(model_input)
                 else:
-                    raw_output = self.model.predict(model_input.cpu().numpy())
+                    raw_output = self.model.predict(model_input.cpu().numpy() if isinstance(model_input, torch.Tensor) else model_input)
             
         return raw_output
 
     def postprocess(self, raw_output: Any) -> Any:
         """
         Converts the raw model output (Tensors/Logits) into a framework-agnostic 
-        intermediate format (NumPy/Dictionary). (Logic remains the same)
+        intermediate format (NumPy/Dictionary).
         """
         logger.debug(f"[{self.predictor_id}] Running Predictor-level postprocessing (Tensor to NumPy/Standardization).")
         

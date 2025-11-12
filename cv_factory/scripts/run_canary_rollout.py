@@ -1,4 +1,4 @@
-# scripts/run_canary_rollout.py
+# scripts/run_canary_rollout.py (HARDENED)
 
 import argparse
 import logging
@@ -7,21 +7,17 @@ import json
 from typing import Dict, Any
 
 # --- Import các thành phần Cốt lõi ---
-from shared_libs.orchestrators.cv_deployment_orchestrator import CVDeploymentOrchestrator
 from shared_libs.orchestrators.utils.orchestrator_exceptions import InvalidConfigError, WorkflowExecutionError
-from shared_libs.ml_core.mlflow_service.implementations.mlflow_logger import MLflowLogger as MockLogger
-from shared_libs.monitoring.event_emitter import ConsoleEventEmitter as MockEmitter
+
+# <<< NEW: SỬ DỤNG PIPELINE RUNNER >>>
+from shared_libs.orchestrators.pipeline_runner import PipelineRunner 
+
 
 # --- Cấu hình Logging Cơ bản ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("GLOBAL_CANARY_SCRIPT")
 
-def load_config(config_path: str) -> Dict[str, Any]:
-    """Tải cấu hình từ file JSON."""
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Configuration file not found at: {config_path}")
-    with open(config_path, 'r') as f:
-        return json.load(f)
+# LOẠI BỎ: def load_config()
 
 def main():
     """
@@ -36,36 +32,35 @@ def main():
                         help="Phiên bản ổn định hiện tại (để biết nên chuyển lưu lượng từ đâu).")
     parser.add_argument("--canary-percent", type=int, default=5,
                         help="Phần trăm lưu lượng truy cập ban đầu cho Canary (ví dụ: 5).")
+    parser.add_argument("--name", type=str, required=True, 
+                        help="Tên mô hình (ví dụ: defect_detector).")
     parser.add_argument("--id", type=str, default="cv_canary_rollout_01", 
                         help="ID duy nhất cho lần chạy Orchestrator này.")
     args = parser.parse_args()
 
     try:
-        raw_config = load_config(args.config)
+        logger.info(f"Starting End-to-End Deployment Workflow for ID: {args.id}")
         
-        mlops_services = {
-            "logger_service": MockLogger(),
-            "event_emitter": MockEmitter(),
-        }
-
-        deployment_orchestrator = CVDeploymentOrchestrator(
-            orchestrator_id=args.id,
-            config=raw_config,
-            **mlops_services
+        # 1. Lắp ráp và Khởi tạo Deployment Orchestrator qua Runner
+        deployment_orchestrator = PipelineRunner.create_orchestrator(
+            config_path=args.config,
+            run_id=args.id,
+            pipeline_type="deployment" # <<< YÊU CẦU LOẠI PIPELINE >>>
         )
 
-        # THỰC THI WORKFLOW: CANARY DEPLOYMENT
+        # 2. THỰC THI WORKFLOW: CANARY DEPLOYMENT
         logger.info(f"Starting CANARY Rollout for {args.uri}. Initial traffic: {args.canary_percent}%.")
         
         endpoint_id = deployment_orchestrator.run(
             model_artifact_uri=args.uri,
-            model_name=raw_config['model']['name'], # Tên model/endpoint
+            model_name=args.name, # Tên model/endpoint
             mode="canary", # <<< CHẾ ĐỘ TRIỂN KHAI >>>
-            new_version_tag=args.uri.split('/')[-1], # Lấy tên version từ URI (ví dụ: '3' hoặc 'canary')
+            new_version_tag=args.uri.split('/')[-1], # Lấy tên version từ URI 
             stable_version=args.stable_version,
             canary_traffic_percent=args.canary_percent 
         )
 
+        # 3. Báo cáo Kết quả
         logger.info("=====================================================")
         logger.info("✅ CANARY ROLLOUT COMPLETED SUCCESSFULLY.")
         logger.info(f"✅ Endpoint ID: {endpoint_id}. Traffic is now split at {args.canary_percent}%.")

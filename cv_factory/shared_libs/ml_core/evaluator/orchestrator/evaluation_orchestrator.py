@@ -1,5 +1,7 @@
 # cv_factory/shared_libs/ml_core/evaluator/evaluation_orchestrator.py
 
+# cv_factory/shared_libs/ml_core/evaluator/evaluation_orchestrator.py
+
 import logging
 import torch
 import numpy as np
@@ -76,9 +78,10 @@ class EvaluationOrchestrator(BaseEvaluator):
         for metric_name, metric_instance in self.metrics_to_compute.items():
             computed_value = metric_instance.compute()
             
-            # Xử lý kết quả phức tạp (Dict cho mAP, IoU per class)
+            # Xử lý kết quả phức tạp (Dict cho mAP, IoU per class, Depth Metrics)
             if isinstance(computed_value, dict):
-                 results["metrics"][metric_name] = computed_value.get(metric_name) # Lưu giá trị tổng quan
+                 # Lấy giá trị tổng quan (thường là giá trị chính của metric)
+                 results["metrics"][metric_name] = computed_value.get(metric_name, computed_value.get('RMSE')) 
                  results["detailed_metrics"].update(computed_value) # Lưu chi tiết
             else:
                  results["metrics"][metric_name] = computed_value
@@ -116,21 +119,44 @@ class EvaluationOrchestrator(BaseEvaluator):
                 # 1. Core Prediction
                 raw_output = model(inputs)
                 
-                # 2. ADAPTER: Chuẩn hóa đầu ra thô của mô hình
+                # 2. ADAPTER: Chuẩn hóa đầu ra thô của mô hình (Predictions)
                 predictions_standardized: StandardizedOutput = self.output_adapter.adapt(
                     raw_output, 
                     image_size=inputs.shape[2:] 
                 )
                 
                 # 3. Targets Standardization (Chuẩn hóa Ground Truth)
-                # Chuyển đổi Target Tensor sang Input Data chuẩn (NumPy)
-                targets_standardized = self.output_adapter._to_numpy(targets_tensor) 
-
+                # Đảm bảo target ở trên đúng device trước khi chuyển sang NumPy
+                targets_tensor = targets_tensor.to(self.device)
+                
+                # SỬ DỤNG adapt_targets() MỚI VỚI FALLBACK LOGIC
+                if hasattr(self.output_adapter, 'adapt_targets'):
+                    # Adapter có phương thức chuyên biệt (ví dụ: DepthAdapter)
+                    targets_standardized = self.output_adapter.adapt_targets(targets_tensor)
+                else:
+                    # Fallback cho các Adapter cũ hoặc trường hợp chung
+                    targets_standardized = self.output_adapter._to_numpy(targets_tensor)
 
                 # 4. Tích lũy Metrics
                 for metric_instance in self.metrics_to_compute.values():
+                    # NOTE: Cần giả định StandardizedOutput (từ adapter.adapt) có method 
+                    # get_numpy_prediction() hoặc được xử lý bởi metric.
+                    # Dựa trên code metric (ví dụ: classification_metrics.py), predictions 
+                    # và targets phải là np.ndarray.
+                    
+                    # Giả định: adapter.adapt() trả về np.ndarray hoặc Dict/List có thể unpack
+                    
+                    # Cần chuyển predictions_standardized thành np.ndarray
+                    if isinstance(predictions_standardized, (dict, list)):
+                        # Logic phức tạp (ví dụ: Detection) - cần được metric xử lý
+                        pred_data = predictions_standardized
+                    else:
+                        # Logic đơn giản (ví dụ: Classification, Depth, Segmentation)
+                        # Đảm bảo nó là NumPy array (vì adapt có thể trả về np.ndarray)
+                        pred_data = np.array(predictions_standardized)
+
                     metric_instance.update(
-                        predictions=predictions_standardized, 
+                        predictions=pred_data, 
                         targets=targets_standardized
                     )
         

@@ -6,9 +6,10 @@ from .base_output_adapter import BaseOutputAdapter
 from .implementations.classification_adapter import ClassificationAdapter
 from .implementations.detection_adapter import DetectionAdapter
 from .implementations.segmentation_adapter import SegmentationAdapter
-# IMPORT MỚI
 from .implementations.ocr_adapter import OCRAdapter
 from .implementations.embedding_adapter import EmbeddingAdapter
+from .implementations.depth_adapter import DepthAdapter # <<< IMPORT MỚI >>>
+from .implementations.pointcloud_adapter import PointCloudAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,10 @@ class OutputAdapterFactory:
         "classification": ClassificationAdapter,
         "detection": DetectionAdapter,
         "segmentation": SegmentationAdapter,
-        "ocr": OCRAdapter,       # Đã thêm
-        "embedding": EmbeddingAdapter, # Đã thêm
+        "ocr": OCRAdapter,
+        "embedding": EmbeddingAdapter,
+        "depth_estimation": DepthAdapter, # <<< ĐĂNG KÝ MỚI >>>
+        "pointcloud_processing": PointCloudAdapter
     }
 
     @staticmethod

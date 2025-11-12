@@ -1,4 +1,4 @@
-# shared_libs/data_labeling/labeling_factory.py (Hardened)
+# shared_libs/data_labeling/labeling_factory.py (FINAL UPDATE)
 
 import logging
 from typing import Dict, Any, Type
@@ -15,6 +15,9 @@ from .implementations.detection_labeler import DetectionLabeler
 from .implementations.segmentation_labeler import SegmentationLabeler
 from .implementations.ocr_labeler import OCRLabeler
 from .implementations.embedding_labeler import EmbeddingLabeler
+from .implementations.depth_labeler import DepthLabeler           # <<< ĐÃ THÊM >>>
+from .implementations.pointcloud_labeler import PointCloudLabeler # <<< ĐÃ THÊM >>>
+from .implementations.keypoint_labeler import KeypointLabeler     # <<< ĐÃ THÊM >>>
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,9 @@ class LabelingFactory:
         "segmentation": SegmentationLabeler,
         "ocr": OCRLabeler,
         "embedding": EmbeddingLabeler,
+        "depth_estimation": DepthLabeler,           # <<< ĐĂNG KÝ MỚI >>>
+        "pointcloud_processing": PointCloudLabeler, # <<< ĐĂNG KÝ MỚI >>>
+        "keypoint_estimation": KeypointLabeler,     # <<< ĐĂNG KÝ MỚI >>>
     }
 
     @staticmethod
@@ -61,9 +67,10 @@ class LabelingFactory:
             
         # 2. Select and Instantiate Labeler Class
         if task_type not in LabelingFactory.LABELER_MAPPING:
+            available_types = list(LabelingFactory.LABELER_MAPPING.keys())
             raise ValueError(
                 f"Unsupported labeler task type: '{task_type}'. "
-                f"Available types are: {list(LabelingFactory.LABELER_MAPPING.keys())}"
+                f"Available types are: {available_types}"
             )
             
         LabelerClass = LabelingFactory.LABELER_MAPPING[task_type]

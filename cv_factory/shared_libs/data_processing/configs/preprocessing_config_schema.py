@@ -29,6 +29,8 @@ class ComponentStepConfig(BaseConfig):
             'dim_reducer', 
             'cnn_embedder', 'vit_embedder',
             'hog_extractor', 'sift_extractor', 'orb_extractor'
+            # NEW DEPTH COMPONENTS
+            , 'loader', 'normalizer', 'augmenter', 'validator', 'converter' # Tên ngắn cho Depth
         ]
         if v not in supported:
             raise ValueError(f"Unknown component type: {v}. Must be one of: {', '.join(supported)}")
@@ -37,7 +39,8 @@ class ComponentStepConfig(BaseConfig):
     @validator('params')
     def validate_normalizer_params(cls, v: Optional[Dict[str, Any]], values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Enforces consistency rules specifically for the 'normalizer' component."""
-        if values.get('type') == 'normalizer':
+        type_ = values.get('type')
+        if type_ == 'normalizer':
             if not v or 'mean' not in v or 'std' not in v:
                 raise ValueError("Normalizer component requires 'mean' and 'std' parameters to be defined.")
             
@@ -50,6 +53,11 @@ class ComponentStepConfig(BaseConfig):
             if isinstance(mean, (list, tuple)) and isinstance(std, (list, tuple)):
                 if len(mean) != len(std):
                     raise ValueError(f"Normalizer: 'mean' ({len(mean)} elements) and 'std' ({len(std)} elements) must have the same length.")
+        
+        # Hardening cho Depth Normalizer Config
+        if type_ == 'normalizer' and 'method' in v and v['method'] == 'minmax':
+             if 'scale' not in v or not isinstance(v['scale'], list) or len(v['scale']) != 2:
+                 raise ValueError("Depth Normalizer ('minmax' method) requires 'scale' parameter as a list of two floats [min, max].")
 
         return v
 
@@ -217,6 +225,60 @@ class FeatureExtractionConfig(BaseConfig):
 
         return v
 
+# --- NEW INTEGRATION: Depth Processing Schema ---
+
+class DepthProcessingConfig(BaseConfig):
+    """
+    Schema cho toàn bộ Depth Processing pipeline, quản lý Load, Normalization, 
+    Augmentation và Validation cho cặp RGB/Depth.
+    """
+    # Policy mode cho Depth: Có thể mở rộng sau này
+    policy_mode: Literal["default"] = Field(
+        "default",
+        description="Policy for depth processing: 'default' sequential execution."
+    )
+    
+    # Các bước được định nghĩa bằng key thay vì list 'steps' để dễ dàng truy cập trong Orchestrator
+    loader: ComponentStepConfig = Field(
+        ...,
+        description="Cấu hình cho DepthLoader (tải và căn chỉnh RGB/Depth). Loại: 'loader'."
+    )
+    
+    normalizer: ComponentStepConfig = Field(
+        ...,
+        description="Cấu hình cho DepthNormalizer (chuẩn hóa giá trị độ sâu). Loại: 'normalizer'."
+    )
+    
+    augmenter: Optional[ComponentStepConfig] = Field(
+        None,
+        description="Cấu hình tùy chọn cho DepthAugmenter (lật, thêm nhiễu). Loại: 'augmenter'."
+    )
+    
+    validator: Optional[ComponentStepConfig] = Field(
+        None,
+        description="Cấu hình tùy chọn cho DepthValidator (kiểm tra phạm vi, chất lượng). Loại: 'validator'."
+    )
+    
+    converter: Optional[ComponentStepConfig] = Field(
+        None,
+        description="Cấu hình tùy chọn cho DisparityConverter (Depth <-> Disparity). Loại: 'converter'."
+    )
+    
+    @validator('loader', 'normalizer', 'augmenter', 'validator', 'converter', always=True)
+    def validate_depth_component_types(cls, v: Optional[ComponentStepConfig], values: Dict[str, Any], field: Any) -> Optional[ComponentStepConfig]:
+        """Rule: Đảm bảo các component Depth có type đúng."""
+        if v is None or v.type is None:
+            return v
+        
+        expected_type = field.name
+        # Đối với loader, normalizer, etc., type phải khớp với tên trường
+        if v.type.lower() != expected_type:
+            raise ValueError(
+                f"DepthProcessingConfig field '{field.name}' requires type '{expected_type}', but got '{v.type}'."
+            )
+        return v
+
+
 # --- Video Processing schema
 class VideoProcessingConfig(BaseConfig):
     """
@@ -276,6 +338,13 @@ class VideoProcessingConfig(BaseConfig):
              raise ValueError("If 'policy_sampler' is used, it must be the only component in the samplers list.")
              
         return v
+    
+    
+class MaskProcessingConfig(BaseModel):
+    """Schema for the Mask/Label Map Processing pipeline."""
+    enabled: bool = Field(False, description="Enables/disables the entire mask processing pipeline.")
+    policy_mode: constr(to_lower=True) = Field("default", description="Execution policy ('default' or 'conditional_metadata').")
+    steps: List[ComponentStepConfig] = Field(..., description="Ordered list of mask processing steps.")
 
 # --- 4. Master Processing Schema ---
 
@@ -291,6 +360,20 @@ class ProcessingConfig(BaseConfig):
         None,
         description="Configuration for the optional video processing and frame sampling pipeline."
     )
+    
+    # NEW INTEGRATION: Depth Processing Layer (Optional)
+    depth_processing: Optional[DepthProcessingConfig] = Field(
+        None,
+        description="Configuration for the optional depth map processing pipeline (RGB/Depth pairs)."
+    )
+    
+     # NEW INTEGRATION: Mask Processing Layer (Optional)
+    mask_processing: Optional[MaskProcessingConfig] = Field(
+        None,
+        description="Configuration for the optional mask/label map processing pipeline (e.g., loading, normalization)."
+    )
+    
+    feature_engineering: FeatureExtractionConfig = Field(..., description="Configuration for feature generation and optimization.")
 
     @validator('augmentation')
     def validate_augmentation_usage(cls, v: AugmentationConfig, values: Dict[str, Any]) -> AugmentationConfig:

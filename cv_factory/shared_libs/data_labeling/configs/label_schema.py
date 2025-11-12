@@ -100,5 +100,47 @@ class EmbeddingLabel(BaseLabel):
             raise ValueError("Embedding vector must have at least one dimension.")
         return v
 
-# Định nghĩa kiểu Output chuẩn hóa cho tầng này (Giữ nguyên)
-StandardLabel = Union[ClassificationLabel, DetectionLabel, SegmentationLabel, OCRLabel, EmbeddingLabel]
+# --- Keypoint Label ---
+KeypointCoordinates = List[confloat(ge=0.0, le=1.0)] # Normalized coordinate [x, y] or [x, y, z]
+
+class KeypointObject(BaseModel):
+    """A single object with associated keypoints (e.g., a person)."""
+    class_name: constr(min_length=1) = Field(..., description="Name of the object class.")
+    keypoints: List[KeypointCoordinates] = Field(..., description="List of [x, y] or [x, y, visibility] coordinates, normalized.")
+    
+class KeypointLabel(BaseLabel):
+    """Schema for Keypoint/Pose Estimation label."""
+    objects: List[KeypointObject] = Field(..., description="List of objects with keypoints.")
+
+# --- Depth Label ---
+
+class DepthLabel(BaseLabel):
+    """Schema for Depth Estimation label."""
+    # Depth map thường được lưu dưới dạng file (e.g., 16-bit PNG)
+    depth_path: constr(min_length=5) = Field(..., description="Local/Cloud path to the raw depth map file.")
+    unit: Literal["meter", "millimeter"] = Field("meter", description="The unit of measurement after scaling.")
+    
+# --- Point Cloud Label ---
+
+class PointCloudLabel(BaseLabel):
+    """Schema for Point Cloud labels (3D BBox, 3D Segmentation)."""
+    # Đường dẫn đến file Point Cloud (.pcd, .bin)
+    pointcloud_path: constr(min_length=5) = Field(..., description="Local/Cloud path to the source Point Cloud file.")
+    
+    # 3D BBox (x, y, z, l, w, h, yaw)
+    bbox_3d: Optional[List[confloat]] = Field(None, description="Normalized 3D Bounding Box coordinates.")
+    
+    # Segmentation Mask cho từng điểm (đường dẫn đến file nhãn)
+    point_mask_path: Optional[str] = Field(None, description="Path to the file containing per-point segmentation/class indices.")
+
+# --- Định nghĩa kiểu Output chuẩn hóa cho tầng này ---
+StandardLabel = Union[
+    ClassificationLabel, 
+    DetectionLabel, 
+    SegmentationLabel, 
+    OCRLabel, 
+    EmbeddingLabel,
+    DepthLabel,           # <<< BỔ SUNG >>>
+    PointCloudLabel,      # <<< BỔ SUNG >>>
+    KeypointLabel         # <<< BỔ SUNG >>>
+]

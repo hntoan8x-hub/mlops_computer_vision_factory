@@ -30,18 +30,28 @@ class SegmentationAdapter(BaseOutputAdapter):
             raise ValueError(f"Segmentation output shape is unsupported: {logits_or_masks.shape}")
 
         if logits_or_masks.ndim == 4 and self.params.is_logits:
-            # Format: [B, C, H, W] -> Logits PyTorch. Áp dụng argmax.
-            predicted_indices = np.argmax(logits_or_masks, axis=1) # Kết quả: [B, H, W]
+            predicted_indices = np.argmax(logits_or_masks, axis=1)
             
         elif logits_or_masks.ndim == 3:
-            # Format: [B, H, W] (Đã là chỉ số lớp hoặc mask binary 3D)
             predicted_indices = logits_or_masks
             
         else:
-            # Format 4D nhưng không phải logits (ví dụ: one-hot)
             raise ValueError("Segmentation Adapter only supports 4D logits or 3D indices/masks.")
 
-        # Đảm bảo dtype là integer (class index)
         predicted_indices = predicted_indices.astype(np.int64)
 
         return predicted_indices
+
+    def adapt_targets(self, targets_tensor: torch.Tensor) -> np.ndarray:
+        """
+        Chuẩn hóa Ground Truth Segmentation Targets cho Metric.update().
+        
+        Args:
+            targets_tensor (torch.Tensor): Tensor Ground Truth thô (thường là LongTensor [B, H, W]).
+            
+        Returns:
+            np.ndarray: NumPy array chứa chỉ số lớp (int64).
+        """
+        # Targets phải là LongTensor chứa chỉ số lớp.
+        targets_np = self._to_numpy(targets_tensor)
+        return targets_np.astype(np.int64)

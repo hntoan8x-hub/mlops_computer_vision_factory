@@ -1,4 +1,4 @@
-# scripts/deploy_standard.py
+# scripts/deploy_standard.py (HARDENED)
 
 import argparse
 import logging
@@ -7,26 +7,17 @@ import json
 from typing import Dict, Any
 
 # --- Import các thành phần Cốt lõi ---
-from shared_libs.orchestrators.cv_deployment_orchestrator import CVDeploymentOrchestrator
 from shared_libs.orchestrators.utils.orchestrator_exceptions import InvalidConfigError, WorkflowExecutionError
 
-# --- Import các MLOps Services MOCK/TEST ---
-from shared_libs.ml_core.mlflow_service.implementations.mlflow_logger import MLflowLogger as MockLogger
-from shared_libs.monitoring.event_emitter import ConsoleEventEmitter as MockEmitter
+# <<< NEW: SỬ DỤNG PIPELINE RUNNER >>>
+from shared_libs.orchestrators.pipeline_runner import PipelineRunner 
+
 
 # --- Cấu hình Logging Cơ bản ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("GLOBAL_DEPLOY_SCRIPT")
 
-def load_config(config_path: str) -> Dict[str, Any]:
-    """
-    Tải cấu hình từ file JSON (hoặc YAML trong môi trường Production).
-    """
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Configuration file not found at: {config_path}")
-    
-    with open(config_path, 'r') as f:
-        return json.load(f)
+
 
 def main():
     """
@@ -44,24 +35,16 @@ def main():
     args = parser.parse_args()
 
     try:
-        # 1. Tải Cấu hình
-        raw_config = load_config(args.config)
+        logger.info(f"Starting End-to-End Deployment Workflow for ID: {args.id}")
         
-        # 2. Khởi tạo MLOps Services (MOCK/TEST)
-        mlops_services = {
-            "logger_service": MockLogger(),
-            "event_emitter": MockEmitter(),
-        }
-
-        # 3. Lắp ráp và Khởi tạo Deployment Orchestrator
-        logger.info(f"Instantiating CVDeploymentOrchestrator with ID: {args.id}.")
-        deployment_orchestrator = CVDeploymentOrchestrator(
-            orchestrator_id=args.id,
-            config=raw_config,
-            **mlops_services
+        # 1. Lắp ráp và Khởi tạo Deployment Orchestrator qua Runner
+        deployment_orchestrator = PipelineRunner.create_orchestrator(
+            config_path=args.config,
+            run_id=args.id,
+            pipeline_type="deployment" # <<< YÊU CẦU LOẠI PIPELINE >>>
         )
 
-        # 4. THỰC THI WORKFLOW: STANDARD DEPLOYMENT
+        # 2. THỰC THI WORKFLOW: STANDARD DEPLOYMENT
         logger.info(f"Starting STANDARD Deployment for model URI: {args.uri}")
         
         # Deployer sẽ tự động lấy version tag từ URI nếu cần
@@ -71,7 +54,7 @@ def main():
             mode="standard" # <<< CHẾ ĐỘ TRIỂN KHAI >>>
         )
 
-        # 5. Báo cáo Kết quả
+        # 3. Báo cáo Kết quả
         logger.info("=====================================================")
         logger.info("✅ DEPLOYMENT COMPLETED SUCCESSFULLY.")
         logger.info(f"✅ Endpoint ID: {endpoint_id}")
@@ -81,7 +64,7 @@ def main():
         logger.error(f"❌ CONFIG ERROR: {e}")
         exit(1)
     except InvalidConfigError as e:
-        logger.error(f"❌ VALIDATION ERROR: Configuration did not pass Pydantic schema check. Details: {e}")
+        logger.error(f"❌ VALIDATION ERROR: Configuration did not pass schema check. Details: {e}")
         exit(1)
     except WorkflowExecutionError as e:
         logger.critical(f"❌ CRITICAL FAILURE: Deployment failed during execution. Details: {e}")

@@ -9,16 +9,16 @@ from .classification_parser import ClassificationParser
 from .detection_parser import DetectionParser
 from .segmentation_parser import SegmentationParser
 from .ocr_parser import OCRParser
-# (Nếu có EmbeddingParser, ta sẽ thêm vào đây)
+from .embedding_parser import EmbeddingParser             # <<< IMPORT MỚI >>>
+from .depth_parser import DepthParser                     # <<< IMPORT MỚI >>>
+from .pointcloud_parser import PointCloudParser           # <<< IMPORT MỚI >>>
+from .keypoint_parser import KeypointParser               # <<< IMPORT MỚI >>>
 
 logger = logging.getLogger(__name__)
 
 class ManualAnnotatorFactory:
     """
     Factory class responsible for creating specific Manual Annotator (Parser) instances.
-    
-    It determines which Parser to instantiate based on the task_type provided in the configuration.
-    This is essential for standardizing the ingestion of human-labeled data.
     """
     
     # Mapping task_type (domain) to Parser Class
@@ -27,6 +27,10 @@ class ManualAnnotatorFactory:
         "detection": DetectionParser,
         "segmentation": SegmentationParser,
         "ocr": OCRParser,
+        "embedding": EmbeddingParser,             # <<< ĐĂNG KÝ MỚI >>>
+        "depth_estimation": DepthParser,          # <<< ĐĂNG KÝ MỚI >>>
+        "pointcloud_processing": PointCloudParser, # <<< ĐĂNG KÝ MỚI >>>
+        "keypoint_estimation": KeypointParser,    # <<< ĐĂNG KÝ MỚI >>>
     }
 
     @staticmethod

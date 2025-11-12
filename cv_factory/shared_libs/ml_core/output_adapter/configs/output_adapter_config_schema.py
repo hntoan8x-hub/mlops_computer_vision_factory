@@ -11,7 +11,9 @@ TaskType = Literal[
     "segmentation", 
     "ocr", 
     "embedding", 
-    "keypoint"
+    "keypoint",
+    "depth_estimation",
+    "pointcloud_processing"
 ]
 
 # --- 1. Sub-Schemas: Cấu hình chuyên biệt theo Task ---
@@ -46,6 +48,24 @@ class EmbeddingAdapterParams(BaseModel):
     # Có chuẩn hóa vector về độ dài đơn vị (L2 norm) không
     normalize_vector: bool = Field(True, description="Nếu True, áp dụng L2 normalization lên feature vector.")
 
+class DepthAdapterParams(BaseModel):
+    """Cấu hình tham số cho Depth Estimation Adapter."""
+    # Depth Estimation có thể cần ngưỡng tối thiểu/tối đa để lọc (ví dụ: MiDaS)
+    min_depth: float = Field(0.1, ge=0.0, description="Ngưỡng độ sâu tối thiểu (meters) để loại bỏ outlier.")
+    max_depth: float = Field(10.0, gt=0.0, description="Ngưỡng độ sâu tối đa (meters).")
+    # Có nên squeeze (loại bỏ) chiều kênh đơn (1) không
+    squeeze_channel: bool = Field(True, description="Nếu True, squeeze tensor/array từ [B, 1, H, W] về [B, H, W].")
+
+class PointCloudAdapterParams(BaseModel): # <<< SCHEMA MỚI >>>
+    """Cấu hình tham số cho Point Cloud Adapter (Detection/Segmentation)."""
+    # Key chứa BBox 3D trong đầu ra thô (Detection 3D)
+    box_3d_key: Optional[str] = Field(None, description="Tên key chứa BBox 3D (x, y, z, l, w, h, yaw).")
+    # Có chuẩn hóa tọa độ (ví dụ: chia cho kích thước voxel map) không
+    normalize_coordinates: bool = Field(False, description="Nếu True, chuẩn hóa tọa độ BBox/Points.")
+    # Chỉ số kênh chứa lớp dự đoán (cho Segmentation 3D)
+    segmentation_channel: Optional[int] = Field(None, description="Chỉ số kênh chứa lớp dự đoán trong tensor đầu ra.")
+
+
 # --- 2. Main Config Schema: Cấu trúc chung cho Output Adapter ---
 
 class OutputAdapterConfig(BaseModel):
@@ -68,5 +88,7 @@ class OutputAdapterConfig(BaseModel):
         DetectionAdapterParams,
         SegmentationAdapterParams,
         EmbeddingAdapterParams,
-        Dict[str, Any] # Fallback cho các params chưa định nghĩa
+        DepthAdapterParams,
+        PointCloudAdapterParams,# <<< UPDATED >>>
+        Dict[str, Any] 
     ] = Field({}, description="Cấu hình tham số chi tiết cho từng loại Adapter.")

@@ -1,0 +1,76 @@
+# output_adapter_master_config.yaml
+# Cấu hình này chứa các ví dụ cho TẤT CẢ các loại Output Adapter.
+
+output_adapters:
+  # --- 1. CLASSIFICATION ADAPTER ---
+  - name: "ImageNet_Classification"
+    task_type: "classification"
+    description: "Chuyển đổi logits thành xác suất (probabilities)."
+    return_dict: false # Trả về numpy array [B, C]
+    params:
+      is_logits: true # Đầu ra thô là logits, cần áp dụng softmax
+      confidence_threshold: 0.0 # Báo cáo tất cả các dự đoán
+
+  # --- 2. DETECTION ADAPTER ---
+  - name: "FasterRCNN_Detection"
+    task_type: "detection"
+    description: "Chuẩn hóa BBox từ pixel sang tọa độ [0, 1]."
+    return_dict: true # Trả về List[Dict] (phù hợp với Detection)
+    params:
+      normalize: true
+      input_bbox_format: "xyxy" # Định dạng BBox đầu vào thô của mô hình
+      box_key: "boxes" # Tên key chứa BBox trong dict đầu ra thô
+
+  # --- 3. SEGMENTATION ADAPTER ---
+  - name: "Semantic_Segmentation"
+    task_type: "segmentation"
+    description: "Chuyển đổi Logits [B, C, H, W] thành Class Index [B, H, W]."
+    return_dict: false
+    params:
+      ignore_index: 255 # Chỉ số cho nền (background) hoặc vùng không được đánh giá
+      is_logits: true # Đầu ra là logits, cần áp dụng argmax
+
+  # --- 4. EMBEDDING ADAPTER ---
+  - name: "FaceNet_Embedding"
+    task_type: "embedding"
+    description: "Trích xuất và chuẩn hóa vector đặc trưng L2."
+    return_dict: true
+    params:
+      embedding_dim: 512
+      normalize_vector: true # Áp dụng L2 normalization
+
+  # --- 5. DEPTH ESTIMATION ADAPTER ---
+  - name: "MiDaS_Depth_Map"
+    task_type: "depth_estimation"
+    description: "Chuẩn hóa và lọc ngưỡng Depth Map."
+    return_dict: false
+    params:
+      min_depth: 0.01 # Lọc giá trị rất gần
+      max_depth: 50.0 # Giới hạn giá trị Depth tối đa
+      squeeze_channel: true # Loại bỏ chiều kênh [B, 1, H, W] -> [B, H, W]
+
+  # --- 6. POINT CLOUD PROCESSING ADAPTER (3D Task) ---
+  - name: "VotNet_3D_Detection"
+    task_type: "pointcloud_processing" # Task mới được thêm
+    description: "Chuẩn hóa đầu ra BBox 3D từ mô hình Point Cloud Detection."
+    return_dict: true
+    params:
+      box_3d_key: "center_3d" # Giả sử key chứa BBox 3D
+      normalize_coordinates: false
+      segmentation_channel: null # Không dùng cho Detection
+
+  # --- 7. OCR ADAPTER ---
+  - name: "Text_Recognition"
+    task_type: "ocr"
+    description: "Chuyển đổi token indices và BBox thành text/List[Dict]."
+    return_dict: true
+    params:
+      # Tham số cho OCR thường liên quan đến logic hậu xử lý token/vùng
+      tokenizer_config_path: "/path/to/tokenizer_config.json"
+      confidence_key: "confidences"
+
+  # --- 8. Ví dụ về Adapter với Config Tối thiểu ---
+  - name: "Simple_Classification"
+    task_type: "classification"
+    return_dict: false
+    params: {} # Sử dụng tất cả các giá trị mặc định của ClassificationAdapterParams
