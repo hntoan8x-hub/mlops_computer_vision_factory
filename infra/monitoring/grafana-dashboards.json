@@ -1,0 +1,49 @@
+grafana-dashboards.json
+A placeholder JSON file for a Grafana dashboard.
+This would be exported from a real Grafana instance.
+{
+"annotations": {
+"list": [
+{
+"builtIn": 1,
+"datasource": "-- Grafana --",
+"enable": true,
+"hide": true,
+"iconColor": "rgba(0, 211, 255, 1)",
+"name": "Annotations & Alerts",
+"type": "dashboard"
+}
+]
+},
+"editable": true,
+"gnetId": null,
+"graphTooltip": 0,
+"id": 1,
+"links": [],
+"panels": [
+{
+"targets": [
+{
+"expr": "rate(assistant_service_requests_total[5m])",
+"legendFormat": "{{status_code}}",
+"refId": "A"
+}
+],
+"title": "Requests per Second (RPS)",
+"type": "graph"
+},
+{
+"targets": [
+{
+"expr": "histogram_quantile(0.95, sum(rate(assistant_service_latency_seconds_bucket[5m])) by (le))",
+"legendFormat": "p95 Latency",
+"refId": "A"
+}
+],
+"title": "p95 Latency",
+"type": "graph"
+}
+],
+"title": "GenAI Assistant Dashboard",
+"uid": "genai-assistant-dashboard-1"
+}

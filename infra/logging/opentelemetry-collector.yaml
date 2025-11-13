@@ -1,0 +1,23 @@
+opentelemetry-collector.yaml
+A basic configuration for the OpenTelemetry Collector to handle traces.
+receivers:
+otlp:
+protocols:
+grpc:
+http:
+
+exporters:
+logging:
+loglevel: debug
+
+For a production environment, you would export to a real backend.
+Example:
+jaeger:
+endpoint: "jaeger-collector:14250"
+tls:
+insecure: true
+service:
+pipelines:
+traces:
+receivers: [otlp]
+exporters: [logging]

@@ -1,4 +1,4 @@
-# domain_models/surface_anomaly_detection/sads_config_schema.py
+# domain_models/surface_anomaly_detection/sads_config_schema.py (UPDATED)
 
 from pydantic import BaseModel, Field, confloat, NonNegativeInt
 from typing import Dict, Any, Optional
@@ -7,17 +7,16 @@ class SADSPostprocessorParams(BaseModel):
     """
     Tham số nghiệp vụ cho việc quyết định lỗi bề mặt (Postprocessor).
     """
-    # Ngưỡng tin cậy tối thiểu cho một lỗi được chấp nhận (Score > Threshold)
-    defect_confidence_threshold: confloat(ge=0, le=1) = Field(0.70, description="Ngưỡng score tối thiểu để chấp nhận một dự đoán là lỗi.")
+    # Ngưỡng tin cậy tối thiểu cho một lỗi được chấp nhận (Score < Threshold -> ESCALATE)
+    defect_confidence_threshold: confloat(ge=0, le=1) = Field(0.70, description="Ngưỡng score tối thiểu để chấp nhận lỗi. Score < ngưỡng sẽ ESCALATE.")
     
-    # Ngưỡng IoU cho Non-Maximum Suppression (NMS)
-    nms_iou_threshold: confloat(ge=0, le=1) = Field(0.45, description="Ngưỡng IoU cho Non-Maximum Suppression (loại bỏ hộp trùng lặp).")
+    # Ngưỡng diện tích lỗi tối đa cho phép (Business Rule 2)
+    max_area_cm2: confloat(ge=0) = Field(0.5, description="Diện tích lỗi tối đa cho phép (tính bằng cm²). Lỗi > ngưỡng là FAIL.")
     
-    # Ngưỡng diện tích tối thiểu (Tính bằng pixel hoặc normalized)
-    min_defect_area_normalized: confloat(ge=0, le=1) = Field(0.001, description="Diện tích lỗi tối thiểu (normalized [0,1]) để bị coi là FAIL.")
+    # Số lượng lỗi tối đa được chấp nhận (Business Rule 3)
+    max_allowed_defects: NonNegativeInt = Field(1, description="Số lượng lỗi tối đa được phép trong một Frame (Frame-level Rule).")
     
-    # Số lượng lỗi tối đa được chấp nhận (ví dụ: > 1 lỗi nhỏ vẫn PASS)
-    max_allowed_defects: NonNegativeInt = Field(0, description="Số lượng lỗi tối đa được phép (0 = chỉ cần 1 lỗi > threshold là FAIL).")
+    # NOTE: NMS logic được chuyển về Detection Predictor, không cần ở Postprocessor nữa.
 
 class SADSPipelineConfig(BaseModel):
     """
@@ -25,11 +24,8 @@ class SADSPipelineConfig(BaseModel):
     """
     domain_type: str = Field("surface_anomaly_detection", const=True, description="Loại domain.")
     
-    postprocessor_params: SADSPostprocessorParams = Field(..., description="Tham số nghiệp vụ cho Postprocessor.")
+    # Các model URI cần thiết (được sử dụng bởi Orchestrator)
+    models: Dict[str, Any] = Field(..., description="Cấu hình cho Detection, Classification, Segmentation models.")
     
-    # Cấu hình MLOps (được sử dụng bởi Orchestrator)
-    model_uri: str = Field(..., description="URI của mô hình Detection đã đăng ký (MLflow).")
-    task_type: str = Field("detection", const=True, description="Tác vụ chính của mô hình.")
-    
-    # Cấu hình các bước khác (có thể mở rộng)
-    detection_model_params: Dict[str, Any] = Field({}, description="Tham số cho mô hình Detection (ví dụ: IoU/Conf model).")
+    # Cấu hình Postprocessor
+    domain: Dict[str, Any] = Field(..., description="Chứa cấu hình cho postprocessor domain.")

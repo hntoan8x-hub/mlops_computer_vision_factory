@@ -1,0 +1,67 @@
+# health_check.yaml
+# Cấu hình cho check_model_health.py
+
+pipeline:
+  # Script này không tạo Orchestrator chính, nhưng cần config cho các Factory
+  type: health_check
+
+# ===============================================
+# 1. MODEL LOADING & DEVICE
+# ===============================================
+model:
+  device: "cpu" # Thường dùng CPU cho các Health Check không yêu cầu hiệu năng cao
+  # LƯU Ý: URI sẽ được cung cấp qua CLI (--model-uri)
+
+model_loading:
+  timeout_seconds: 60
+
+# ===============================================
+# 2. INFERENCE & POSTPROCESSING LOGIC
+# ===============================================
+preprocessing:
+  context: "inference"
+  steps:
+    - name: "resize"
+      params: { width: 224, height: 224 }
+    - name: "normalize"
+      params: { mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] }
+
+domain:
+  # Cấu hình Dynamic Import cho Postprocessor (cho CVPredictor)
+  postprocessor:
+    module_path: "domain_specific.postprocessors.defect_classifier_adapter"
+    class_name: "DefectClassifierAdapter"
+    params:
+      threshold: 0.8
+      label_map: "/config/labels.json"
+
+# ===============================================
+# 3. LIVE DATA & DATASET CONFIG
+# ===============================================
+data_ingestion:
+  connector_config:
+    type: "image"
+    # URI tĩnh này sẽ bị PipelineRunner ghi đè
+    uri: "s3://cv-factory/production-data-metadata/default"
+
+datasets:
+  # Cấu hình cần thiết để CVDataset biết cách tạo metadata
+  production:
+    metadata_path: "/tmp/live_data_metadata.json"
+
+live_data:
+  # URI được PipelineRunner sử dụng để ghi đè nguồn dữ liệu
+  uri_source: "s3://prod-system/live-samples/2025-05-15/"
+
+# ===============================================
+# 4. EVALUATION & QUALITY GATE
+# ===============================================
+evaluator:
+  task_type: "classification"
+  metrics: ["accuracy", "mAP"]
+
+  # QUALITY GATE: Quan trọng nhất cho Health Check
+  min_required_map: 0.75 # Nếu mAP < 0.75, Health Check FAIL (Exit Code 1)
+
+  adapter_config:
+    output_key: "logits"

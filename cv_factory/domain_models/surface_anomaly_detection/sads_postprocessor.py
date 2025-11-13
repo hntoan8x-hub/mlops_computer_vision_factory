@@ -1,112 +1,104 @@
-# domain_models/surface_anomaly_detection/sads_postprocessor.py
+# domain_models/surface_anomaly_detection/sads_postprocessor.py (HARDENED)
 
 import logging
-import numpy as np
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Tuple
 from .sads_config_schema import SADSPostprocessorParams # Import tham số nghiệp vụ
+from .sads_data_contract import SADSDefect, SADSFinalResult # Import Data Contract mới
+import numpy as np
+from dataclasses import asdict
 
 logger = logging.getLogger(__name__)
 
 # NOTE: Giả định utility NMS có sẵn
-def apply_nms(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> np.ndarray:
-    """Mô phỏng hàm Non-Maximum Suppression."""
-    # (Implementation chi tiết của NMS cần được đặt trong shared_libs/core_utils/numpy_utils)
-    # Trả về chỉ mục của các hộp không bị trùng lặp
-    return np.arange(len(boxes)) # Trả về tất cả cho mục đích mô phỏng
+# Không áp dụng NMS ở đây nữa; nó nên được áp dụng ở Detection Predictor hoặc đầu SADS Orchestrator.
+# Postprocessor chỉ tập trung vào Business Rules (luật kinh doanh).
 
 class SADSPostprocessor:
     """
-    Lớp Postprocessor Domain-specific cho Surface Anomaly Detection.
-    Được Inject vào CVPredictor để áp dụng Business Logic (NMS, PASS/FAIL Decision).
+    Lớp Postprocessor Domain-specific, hoạt động như Decision Engine.
+    Áp dụng các Luật Kinh Doanh (Business Rules) lên các SADSDefect Entity.
     """
 
     def __init__(self, **kwargs: Dict[str, Any]):
         """
-        Khởi tạo với tham số nghiệp vụ (được tải qua Dynamic Import).
+        Khởi tạo với tham số nghiệp vụ đã được validate (từ SADSPostprocessorParams).
         """
         try:
-            # Pydantic validation của tham số nghiệp vụ
             self.params = SADSPostprocessorParams(**kwargs)
         except Exception as e:
             raise ValueError(f"SADS Postprocessor Config validation failed: {e}")
 
-        logger.info(f"SADS Postprocessor initialized. Confidence Threshold: {self.params.defect_confidence_threshold}")
+        logger.info(f"SADS Postprocessor initialized. Max Allowed Defects: {self.params.max_allowed_defects}")
 
-    def _make_decision(self, defect_count: int, defect_area_ratio: float) -> str:
+    def _get_defect_area_cm2(self, defect: SADSDefect) -> float:
         """
-        Decision Engine: Quyết định PASS/FAIL dựa trên Business Rules.
+        Mô phỏng chuyển đổi diện tích pixel sang cm².
+        Trong thực tế, cần một tỷ lệ Px/Cm (từ camera calibration).
         """
-        # Rule 1: Số lượng lỗi vượt quá giới hạn
-        if self.params.max_allowed_defects == 0 and defect_count > 0:
-            return "FAIL"
-        if defect_count > self.params.max_allowed_defects and self.params.max_allowed_defects > 0:
-            return "FAIL"
-        
-        # Rule 2: Diện tích lỗi vượt quá giới hạn
-        if defect_area_ratio > self.params.min_defect_area_normalized:
-            return "FAIL"
+        # Giả định tỷ lệ cố định để mô phỏng
+        PIXEL_TO_CM2_RATIO = 0.0001
+        if defect.area_px is not None:
+            return defect.area_px * PIXEL_TO_CM2_RATIO
+        return 0.0
+
+    def _make_item_decision(self, defect: SADSDefect) -> str:
+        """
+        Quyết định (Decision) cho MỘT ứng viên lỗi (Item-level Decision).
+        Thực hiện các Business Rules Real-World.
+        """
+        decision = "PASS"
+        area_cm2 = self._get_defect_area_cm2(defect)
+
+        # Rule 1: Confidence quá thấp → ESCALATE (Yêu cầu kiểm tra thủ công)
+        if defect.score < self.params.defect_confidence_threshold:
+            decision = "ESCALATE"
+            return decision
+
+        # Rule 2: Diện tích lỗi vượt quá ngưỡng cho phép (Sử dụng đơn vị cm²)
+        if self.params.max_area_cm2 > 0 and area_cm2 > self.params.max_area_cm2:
+            decision = "FAIL"
+            return decision
+
+        # Rule 3: Lỗi thuộc danh sách lỗi nghiêm trọng (Critical Defects)
+        # Giả định cần một Mapping từ cls_id sang tên lớp (không có ở đây, dùng ID mô phỏng)
+        CRITICAL_DEFECT_IDS = [1, 5, 8] # Ví dụ: Lõm sâu (1), Vết nứt (5), Cháy (8)
+        if defect.cls_id in CRITICAL_DEFECT_IDS:
+            decision = "FAIL"
+            return decision
             
-        return "PASS"
+        return decision
 
-    def run(self, 
-            standardized_predictions: List[Dict[str, Any]], 
-            config: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def decide(self, unified_defects: List[SADSDefect]) -> SADSFinalResult:
         """
-        Thực thi Business Logic trên đầu ra đã được chuẩn hóa từ OutputAdapter.
-
-        Args:
-            standardized_predictions (List[Dict]): Output từ OutputAdapter: 
-                                                   List of [{'box': array, 'score': float, 'class': int}]
-            config (Dict): Cấu hình bổ sung từ Predictor (không cần thiết ở đây).
-
-        Returns:
-            Dict[str, Any]: Kết quả cuối cùng (có Decision, BBoxes đã NMS).
+        [NEW SIGNATURE] Thực thi Decision Engine trên các SADSDefect Entity.
+        Trả về Quyết định cuối cùng (Frame-level Decision).
         """
+        item_results: List[Tuple[str, SADSDefect]] = []
         
-        if not standardized_predictions:
-            return {"decision": "PASS", "defects": [], "summary": {"count": 0, "area_ratio": 0.0}}
+        # 1. Quyết định từng Item (Item-level decision)
+        for defect in unified_defects:
+            item_decision = self._make_item_decision(defect)
+            item_results.append((item_decision, defect))
 
-        boxes = np.array([p['box'] for p in standardized_predictions])
-        scores = np.array([p['score'] for p in standardized_predictions])
-        classes = np.array([p['class'] for p in standardized_predictions])
-
-        # 1. Lọc ngưỡng Confidence
-        valid_indices = scores >= self.params.defect_confidence_threshold
-        boxes = boxes[valid_indices]
-        scores = scores[valid_indices]
-        classes = classes[valid_indices]
+        # 2. Áp dụng Rule Tổng Thể (Frame-level decision)
+        final_decision = "PASS"
         
-        # 2. Áp dụng NMS (Non-Maximum Suppression)
-        if len(boxes) > 0:
-            nms_indices = apply_nms(boxes, scores, self.params.nms_iou_threshold)
-            boxes = boxes[nms_indices]
-            scores = scores[nms_indices]
-            classes = classes[nms_indices]
+        # Rule Tổng Thể 1: Nếu CÓ BẤT KỲ lỗi nào FAIL → Frame FAIL
+        if any(r[0] == "FAIL" for r in item_results):
+            final_decision = "FAIL"
         
-        # 3. Tổng hợp kết quả và tính toán diện tích
-        final_defects: List[Dict[str, Any]] = []
-        total_defect_area_normalized = 0.0
-
-        for box, score, cls in zip(boxes, scores, classes):
-            # Tính diện tích (giả định BBox là normalized [0, 1])
-            area = (box[2] - box[0]) * (box[3] - box[1]) 
-            total_defect_area_normalized += area
+        # Rule Tổng Thể 2: Nếu không FAIL, nhưng có BẤT KỲ lỗi nào ESCALATE → Frame ESCALATE
+        elif any(r[0] == "ESCALATE" for r in item_results):
+            final_decision = "ESCALATE"
             
-            final_defects.append({
-                "type": f"defect_{int(cls)}",
-                "score": float(score),
-                "bbox_normalized": box.tolist()
-            })
+        # Rule Tổng Thể 3: Số lượng lỗi tổng thể vượt quá giới hạn (ngay cả khi chúng là PASS)
+        if len(item_results) > self.params.max_allowed_defects and final_decision == "PASS":
+            final_decision = "FAIL" # Có quá nhiều lỗi nhỏ tích lũy
 
-        # 4. Quyết định (Decision)
-        decision = self._make_decision(len(final_defects), total_defect_area_normalized)
+        logger.info(f"Final Frame Decision: {final_decision}. Total Defects: {len(unified_defects)}")
 
-        return {
-            "decision": decision,
-            "defects": final_defects,
-            "summary": {
-                "count": len(final_defects),
-                "area_ratio": total_defect_area_normalized
-            }
-        }
+        # 3. Trả về Hợp đồng đầu ra
+        return SADSFinalResult(
+            final_decision=final_decision,
+            details=item_results
+        )

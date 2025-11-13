@@ -1,53 +1,56 @@
-# Core libraries for project structure and data handling
-numpy>=1.24.0
-scipy>=1.10.0
-PyYAML>=6.0
-pydantic>=1.10.0
-scikit-learn>=1.2.0
-pandas>=1.5.0
+# ----------------------------------------------------
+# 1. CORE ML FRAMEWORK (Computer Vision)
+# ----------------------------------------------------
+# Cần cho Trainer/Predictor/Feature Extraction
+torch>=1.13.0
+torchvision>=0.14.0
+torchaudio>=0.13.0
+# Tăng tốc tính toán (Nếu sử dụng Cuda/GPU)
+# CUDA-related dependencies should be managed by the base image if possible, 
+# but if explicit pinning is needed, they go here (e.g., torchaudio+cu117)
+
+# ----------------------------------------------------
+# 2. MLOPS & ARTIFACT MANAGEMENT
+# ----------------------------------------------------
+# Cần cho BaseTracker, BaseRegistry, Model Loading
+mlflow>=2.1.1
+boto3>=1.26.0  # Cần cho việc lưu trữ artifact (S3, MinIO)
+pydantic>=1.10.4 # Cần cho tất cả các Config Schema validation
+requests>=2.28.1 # Cần cho AlertReporter và các tiện ích HTTP khác
+typing-extensions>=4.4.0 # Hỗ trợ Type Hint nâng cao
+
+# ----------------------------------------------------
+# 3. FASTAPI/INFERENCE SERVING
+# ----------------------------------------------------
+# Cần cho Inference Role Image
 fastapi>=0.95.0
-uvicorn>=0.21.0
-requests>=2.28.0
+uvicorn[standard]>=0.20.0 # Standard includes tools like httptools and websockets
+gunicorn>=20.1.0 # Cần cho Inference Role Production CMD
 
-# Computer Vision & Deep Learning
-torch>=2.0.0
-torchvision>=0.15.0
-opencv-python>=4.7.0
-Pillow>=9.5.0
+# ----------------------------------------------------
+# 4. DATA HANDLING & UTILITIES
+# ----------------------------------------------------
+# Cần cho DataLoader/Preprocessing/Monitoring
+numpy>=1.24.2
+pandas>=1.5.3
+scipy>=1.10.0 # Cần cho các thống kê như KS-Test, KL/JS Divergence
+Pillow>=9.4.0 # Thư viện xử lý ảnh (thường dùng trong CVDataset/Preprocessing)
+nltk>=3.8.1 # Cần cho trainer.Dockerfile (ví dụ: mô hình lai/metadata)
+scikit-learn>=1.2.1 # Cần cho Classification Metrics (Evaluation)
+python-multipart>=0.0.5 # Cho FastAPI Form/File Uploads
 
-# Specialized CV libraries
-transformers>=4.28.0
-albumentations>=1.3.0
+# ----------------------------------------------------
+# 5. MONITORING & RETRAINING TRIGGER (Reporters & Utilities)
+# ----------------------------------------------------
+prometheus-client>=0.16.0 # Cần cho PrometheusReporter
+# Thư viện cho Alerting (Giả định)
+# slack-sdk>=3.20.1 # Nếu dùng Slack SDK thay vì webhook đơn giản
+# python-json-logger>=2.0.7 # Cho LogReporter
+# python-grafana-api>=1.0.0 # Nếu sử dụng GrafanaDashboardReporter
 
-# Explainability
-captum>=0.6.0
-pytorch-grad-cam>=1.4.0
-lime>=0.2.0
-shap>=0.42.0
-
-# MLOps & Data Management
-mlflow>=2.3.0
-sagemaker>=2.150.0  # For AWS SageMaker deployment
-google-cloud-aiplatform>=1.30.0 # For GCP Vertex AI deployment
-azure-ai-ml>=1.8.0 # For Azure ML deployment
-azure-identity>=1.13.0 # For Azure authentication
-boto3>=1.26.0
-google-cloud-storage>=2.8.0
-
-# Vector Databases
-faiss-cpu>=1.7.0
-faiss-gpu>=1.7.0 # Optional, for GPU-accelerated FAISS
-pymilvus>=2.2.0
-weaviate-client>=3.17.0
-pinecone-client>=2.2.0
-chromadb>=0.3.0
-
-# Monitoring
-prometheus-client>=0.16.0
-
-# Retraining
-flaml>=1.2.0 # For AutoMLCVTrainer
-
-# Development & Testing
-pytest>=7.2.0
-pytest-mock>=3.10.0
+# ----------------------------------------------------
+# 6. FEATURE STORE & VECTOR SEARCH (Giả định)
+# ----------------------------------------------------
+# Cần cho FeatureStoreOrchestrator/VectorStoreFactory
+# Giả định sử dụng FAISS cho Vector Search Engine
+faiss-cpu>=1.7.3

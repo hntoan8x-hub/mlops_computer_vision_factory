@@ -1,0 +1,24 @@
+alertmanager.yaml
+A simple Alertmanager configuration for basic alerting.
+global:
+resolve_timeout: 5m
+
+route:
+receiver: 'default_receiver'
+
+receivers:
+
+name: 'default_receiver'
+
+Here you would configure notifications via email, Slack, PagerDuty, etc.
+Example:
+slack_configs:
+- api_url: 'https://hooks.slack.com/services/...'
+channel: '#alerts'
+name: 'critical_alerts'
+
+For critical alerts, e.g., SLA breaches.
+Example:
+slack_configs:
+- api_url: 'https://hooks.slack.com/services/...'
+channel: '#critical-alerts'

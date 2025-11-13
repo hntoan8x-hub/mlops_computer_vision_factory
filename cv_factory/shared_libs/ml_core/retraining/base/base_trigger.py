@@ -1,5 +1,7 @@
+# shared_libs/ml_core/retraining/base/base_trigger.py
 import abc
 from typing import Dict, Any, Optional
+from shared_libs.ml_core.mlflow_service.base.base_registry import BaseRegistry # NEW IMPORT
 
 class BaseTrigger(abc.ABC):
     """
@@ -9,8 +11,9 @@ class BaseTrigger(abc.ABC):
     based on a specific condition.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], registry_service: Optional[BaseRegistry] = None):
         self.config = config
+        self.registry = registry_service # NEW: Store the injected registry service
 
     @abc.abstractmethod
     def check(self, **kwargs: Dict[str, Any]) -> bool:

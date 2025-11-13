@@ -1,0 +1,115 @@
+# training_pipeline.yaml
+# Cấu hình cho run_training_job.py
+
+pipeline:
+  # Xác định Orchestrator chính cần tạo
+  type: training
+
+run_metadata:
+  git_sha: "abc1234"
+  config_hash: "def5678"
+
+# ===============================================
+# 1. MLOPS CONFIG (Cho Tracker, Registry, và Client)
+# ===============================================
+mlflow:
+  tracking_uri: "http://mlflow-server.svc.local:5000"
+
+  # Configuration cho BaseTracker (Dynamic Import)
+  tracker:
+    type: "mlflow"
+    params:
+      # Tham số khởi tạo cho MLflowLogger (BaseTracker)
+      tracking_uri: "http://mlflow-server.svc.local:5000"
+      experiment_name: "cv_defect_detection"
+    mlflow: # Cấu hình cho Dynamic Import
+      module_path: "shared_libs.ml_core.mlflow_service.implementations.mlflow_logger"
+      class_name: "MLflowLogger"
+
+  # Configuration cho BaseRegistry (Dynamic Import)
+  registry:
+    type: "mlflow"
+    params:
+      tracking_uri: "http://mlflow-server.svc.local:5000"
+    mlflow: # Cấu hình cho Dynamic Import
+      module_path: "shared_libs.ml_core.mlflow_service.implementations.mlflow_registry"
+      class_name: "MLflowRegistry"
+
+# ===============================================
+# 2. MODEL & TRAINER CONFIG
+# ===============================================
+model:
+  name: "resnet50_v2"
+  device: "cuda"
+  pretrained: true
+  num_classes: 10
+  # Các tham số khác cho ModelFactory...
+
+trainer:
+  type: "cnn" # Sử dụng CNNTrainer (Đã đăng ký trong TrainerFactory)
+  epochs: 20
+  batch_size: 64
+  num_workers: 8
+  learning_rate: 0.001
+  # Các tham số khác cho TrainerConfig...
+
+# ===============================================
+# 3. DATA & PREPROCESSING
+# ===============================================
+data_ingestion:
+  connector_config:
+    type: "image"
+    uri: "s3://cv-factory/training-data/"
+
+preprocessing:
+  context: "training"
+  steps:
+    - name: "resize"
+      params: { width: 224, height: 224 }
+    - name: "normalize"
+      params: { mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] }
+
+datasets:
+  train:
+    metadata_path: "/data/train/metadata.json"
+  validation:
+    metadata_path: "/data/val/metadata.json"
+
+# ===============================================
+# 4. EVALUATOR CONFIG
+# ===============================================
+evaluator:
+  task_type: "classification"
+  metrics: ["accuracy", "f1_score"]
+
+  # Cấu hình cho Output Adapter
+  adapter_config:
+    adapter_id: "classification-adapter"
+    output_key: "logits"
+
+  metrics_config: # Chi tiết cấu hình cho MetricFactory
+    f1_score:
+      average: "macro"
+
+# ===============================================
+# 5. DEPLOYMENT CONFIG (Kích hoạt sau khi Training hoàn tất)
+# ===============================================
+deployment:
+  enabled: true
+  initial_mode: "canary" # Kích hoạt Canary Rollout ban đầu
+  stable_version: "v1.5.0"
+  endpoint_name: "prod-defect-detector"
+
+  # Cấu hình cho DeployerFactory
+  config:
+    platform: "kubernetes"
+    image_uri: "docker-registry/cv-prod-inf:latest"
+    instance_type: "t2.medium"
+
+    # Cấu hình cho TrafficControllerFactory
+    traffic_controller:
+      enabled: true
+      type: "istio"
+      params:
+        gateway_name: "cv-gateway"
+        service_name: "prod-defect-detector"

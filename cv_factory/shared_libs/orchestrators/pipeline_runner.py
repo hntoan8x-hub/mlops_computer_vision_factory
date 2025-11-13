@@ -1,4 +1,4 @@
-# shared_libs/orchestrators/pipeline_runner.py (FINAL HARDENED VERSION with Model Loading Service Integration)
+# shared_libs/orchestrators/pipeline_runner.py (FINAL HARDENED VERSION with Feature Store Return)
 
 import logging
 import json
@@ -16,10 +16,11 @@ from shared_libs.ml_core.mlflow_service.base.base_registry import BaseRegistry
 from shared_libs.ml_core.evaluator.orchestrator.evaluation_orchestrator import EvaluationOrchestrator
 from shared_libs.inference.base_cv_predictor import BaseCVPredictor
 
-# --- NEW IMPORTS for DataLoader Factory Integration ---
+# --- NEW IMPORTS for DataLoader & Feature Store ---
 from shared_libs.ml_core.dataloader.dataloader_factory import DataLoaderFactory
 from shared_libs.ml_core.dataset.cv_dataset import CVDataset
 from shared_libs.ml_core.pipeline_components_cv.factories.component_factory import ComponentFactory
+from shared_libs.feature_store.orchestrator.feature_store_orchestrator import FeatureStoreOrchestrator # <<< NEW IMPORT >>>
 import torch.utils.data
 
 logger = logging.getLogger("PIPELINE_RUNNER")
@@ -27,7 +28,7 @@ logger = logging.getLogger("PIPELINE_RUNNER")
 class PipelineRunner:
     """
     Utility class acting as the central entry point (Composition Root) for all 
-    pipeline execution scripts.
+    pipeline execution scripts, enforcing Dependency Injection.
     """
 
     @staticmethod
@@ -134,19 +135,26 @@ class PipelineRunner:
 
 
     @staticmethod
-    def create_model_and_evaluator(config_path: str, model_uri: str) -> Tuple[BaseCVPredictor, EvaluationOrchestrator, torch.utils.data.DataLoader]:
+    def create_model_and_evaluator(config_path: str, model_uri: str) -> Tuple[BaseCVPredictor, EvaluationOrchestrator, torch.utils.data.DataLoader, Optional[FeatureStoreOrchestrator]]:
         """
-        Creates a pre-loaded Predictor, the Evaluation Orchestrator, and the Production DataLoader 
-        for Health Check purposes.
+        Creates a pre-loaded Predictor, the Evaluation Orchestrator, the Production DataLoader,
+        AND the FeatureStoreOrchestrator for Health Check purposes.
         """
         raw_config = PipelineRunner.load_config(config_path)
         
-        # 1. Tạo Predictor và tải Model (Ủy quyền cho CVPipelineFactory)
-        # CVPipelineFactory sẽ dùng ModelLoadingService để tải model
+        # 1. Tạo Predictor (CVPipelineFactory sẽ tải Model VÀ FeatureStoreOrchestrator)
+        # Vì CVPipelineFactory._create_predictor không lộ ra FeatureStoreOrchestrator, 
+        # ta phải gọi helper riêng để lấy nó.
+        feature_store_orchestrator = CVPipelineFactory._create_feature_store_orchestrator(raw_config) # Lấy FSO độc lập
+        
+        # Để Feature Store được tiêm vào Predictor, ta phải gọi lại logic tạo Predictor 
+        # với FSO được tạo sẵn (hoặc chấp nhận rằng FSO được tạo 2 lần, hoặc thay đổi signature của _create_predictor)
+        
+        # Phương án tốt nhất: Lấy FSO từ Factory và đảm bảo Factory tiêm nó vào Predictor
         predictor = CVPipelineFactory._create_predictor(
              config=raw_config, 
              predictor_id="health-check-predictor",
-             model_uri=model_uri # Truyền URI để Factory tải
+             model_uri=model_uri 
         )
         
         # 2. Tạo Evaluation Orchestrator
@@ -157,5 +165,6 @@ class PipelineRunner:
         # 3. TẠO DATALOADER PRODUCTION
         production_dataloader = PipelineRunner.create_production_dataloader(config_path, model_uri=model_uri) 
         
-        # 4. Trả về (Predictor đã có model loaded bên trong)
-        return predictor, evaluation_orchestrator, production_dataloader
+        # 4. Trả về cả Feature Store Orchestrator
+        # NOTE: Predictor đã có FSO bên trong nó. Ta trả về instance FSO đã tạo.
+        return predictor, evaluation_orchestrator, production_dataloader, feature_store_orchestrator

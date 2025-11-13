@@ -1,0 +1,19 @@
+# infra/cicd/github-actions.yaml
+
+jobs:
+  build_and_scan:
+    steps:
+      - name: Run Hadolint (Dockerfile Linter)
+        uses: hadolint/hadolint-action@v3
+        # Hardening: Fail the build if the Dockerfile does not meet security standards.
+
+      - name: Build Docker Image
+        run: docker build -t genai-assistant:latest .
+
+      - name: Run Trivy Vulnerability Scan (CRITICAL HARDENING)
+        uses: aquasec/trivy-action@master
+        with:
+          image-ref: "genai-assistant:latest"
+          format: "table"
+          exit-code: "1" # Hardening: Fail the CI pipeline if any CRITICAL or HIGH severity vulnerability is found.
+          severity: "CRITICAL,HIGH"

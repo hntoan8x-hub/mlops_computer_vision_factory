@@ -1,0 +1,53 @@
+# manifest/2_inference/02_inference_deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cv-inference-stable
+  namespace: mlops-cv-factory
+  labels:
+    app: cv-inference-api
+    version: stable # Label Istio: Phiên bản ổn định
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cv-inference-api
+      version: stable
+  template:
+    metadata:
+      labels:
+        app: cv-inference-api
+        version: stable
+    spec:
+      serviceAccountName: appuser-sa # Sử dụng non-root Service Account
+      containers:
+        - name: cv-predictor
+          image: your-registry/cv-factory:inference-stable-v1.0 # Sử dụng Stable Tag
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+          # HARDENING: Probes để kiểm tra Health Check Hardened
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health/model_readiness # CRITICAL: Kiểm tra Model Readiness Hardened
+              port: 8000
+            initialDelaySeconds: 30 # Đợi thời gian tải mô hình
+            periodSeconds: 10
+          # DI cấu hình
+          envFrom:
+            - configMapRef:
+                name: cv-factory-configs
+            - secretRef:
+                name: cv-factory-secrets

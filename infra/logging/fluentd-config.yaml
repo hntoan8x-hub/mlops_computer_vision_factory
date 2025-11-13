@@ -1,0 +1,19 @@
+fluentd-config.yaml
+A basic Fluentd configuration to collect logs from Kubernetes pods.
+<source>
+@type tail
+path /var/log/containers/.log
+pos_file /var/log/fluentd-containers.log.pos
+tag kubernetes.
+format json
+</source>
+
+<match kubernetes.**>
+@type stdout
+
+Send logs to a centralized log storage like Loki.
+Example:
+@type loki
+host loki-service
+port 3100
+</match>

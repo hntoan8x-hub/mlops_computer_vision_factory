@@ -1,0 +1,39 @@
+---
+# manifest/3_istio/01_destination_rule.yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: cv-inference-destination
+  namespace: mlops-cv-factory
+spec:
+  host: cv-inference-service
+  subsets:
+    - name: stable
+      labels:
+        version: stable # Khớp với Deployment 'cv-inference-stable'
+    - name: canary
+      labels:
+        version: canary # Sẽ được tạo khi Canary được kích hoạt
+---
+# manifest/3_istio/02_virtual_service.yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: cv-inference-virtual-service
+  namespace: mlops-cv-factory
+spec:
+  hosts:
+    - "*" # Hoặc tên DNS/Gateway cụ thể
+  gateways:
+    - cv-factory-gateway # Cổng Ingress Gateway
+  http:
+    - route:
+        # Ban đầu, 100% traffic đi đến stable
+        - destination:
+            host: cv-inference-service
+            subset: stable
+          weight: 100
+        - destination:
+            host: cv-inference-service
+            subset: canary
+          weight: 0

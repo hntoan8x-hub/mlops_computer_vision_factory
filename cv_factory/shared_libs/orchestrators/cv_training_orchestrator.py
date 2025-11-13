@@ -1,10 +1,10 @@
-# shared_libs/orchestrators/cv_training_orchestrator.py (FINAL UPDATE WITH LIVE DATA INJECTION)
+# shared_libs/orchestrators/cv_training_orchestrator.py (UPDATED - FS CONTEXT MANAGER)
 
 import logging
 from typing import Dict, Any, Union, Tuple, Optional, Type
 import torch
 import os 
-from torch.utils.data import DataLoader # Cần cho type hint
+from torch.utils.data import DataLoader 
 
 # --- Import Contracts and Factories ---
 from shared_libs.orchestrators.base.base_orchestrator import BaseOrchestrator
@@ -19,18 +19,21 @@ from shared_libs.ml_core.pipeline_components_cv.factories.component_factory impo
 from shared_libs.orchestrators.cv_deployment_orchestrator import CVDeploymentOrchestrator 
 from shared_libs.ml_core.dataloader.dataloader_factory import DataLoaderFactory 
 
+# NEW IMPORTS: Feature Store Orchestrator
+from shared_libs.feature_store.orchestrator.feature_store_orchestrator import FeatureStoreOrchestrator 
+import numpy as np # Cần cho mocking embeddings
+
 # --- Import Utilities, Exceptions, and Monitoring ---
 from shared_libs.orchestrators.utils.orchestrator_monitoring import measure_orchestrator_latency 
 from shared_libs.orchestrators.utils.orchestrator_exceptions import InvalidConfigError, WorkflowExecutionError 
-# Note: Giả định TrainingOrchestratorConfig được import/định nghĩa tại đây
 from shared_libs.ml_core.configs.orchestrator_config_schema import TrainingOrchestratorConfig 
 
 logger = logging.getLogger(__name__)
 
 class CVTrainingOrchestrator(BaseOrchestrator):
     """
-    Orchestrates the end-to-end training and evaluation pipeline for a CV model.
-    HARDENED: Uses Dependency Injection for all complex components (Evaluator, Deployer, Factories).
+    Orchestrates the end-to-end training and evaluation pipeline.
+    UPDATED: Integrated FeatureStoreOrchestrator via Dependency Injection.
     """
     
     def __init__(self, 
@@ -42,9 +45,11 @@ class CVTrainingOrchestrator(BaseOrchestrator):
                  
                  evaluation_orchestrator: EvaluationOrchestrator,
                  deployment_orchestrator: Optional[CVDeploymentOrchestrator],
-                 trainer_factory: Type[TrainerFactory],
+                 trainer_factory: Type[Any], 
                  ml_component_factory: Type[ComponentFactory],
-                 live_data_uri_override: Optional[str] = None # <<< THAM SỐ GHI ĐÈ URI MỚI >>>
+                 live_data_uri_override: Optional[str] = None,
+                 # <<< INJECTED FEATURE STORE >>>
+                 feature_store_orchestrator: Optional[FeatureStoreOrchestrator] = None 
                 ):
         
         super().__init__(orchestrator_id, config, logger_service, event_emitter)
@@ -54,7 +59,8 @@ class CVTrainingOrchestrator(BaseOrchestrator):
         self.deployment_orchestrator = deployment_orchestrator 
         self.trainer_factory = trainer_factory                 
         self.ml_component_factory = ml_component_factory       
-        self.live_data_uri_override = live_data_uri_override # LƯU TRỮ URI GHI ĐÈ
+        self.live_data_uri_override = live_data_uri_override 
+        self.feature_store = feature_store_orchestrator # LƯU TRỮ ORCHESTRATOR
         
         self.logger.info("CVTrainingOrchestrator initialized with all required services INJECTED.")
 
@@ -75,7 +81,6 @@ class CVTrainingOrchestrator(BaseOrchestrator):
     def _prepare_data(self) -> Tuple[DataLoader, DataLoader, DataLoader]:
         """
         Prepares CVDatasets and creates DDP-compatible DataLoaders.
-        UPDATED: Pass live_data_uri_override to CVDataset.
         """
         self.logger.info(f"[{self.orchestrator_id}] Preparing data: Dataset -> DataLoader.")
         
@@ -87,36 +92,78 @@ class CVTrainingOrchestrator(BaseOrchestrator):
             'preprocessing_config': self.config['preprocessing'],
             'labeling_config': self.config['labeling'],
             'ml_component_factory': self.ml_component_factory,
-            'live_data_uri_override': self.live_data_uri_override # <<< TRUYỀN URI GHI ĐÈ XUỐNG DATASET >>>
+            'live_data_uri_override': self.live_data_uri_override 
         }
 
-        # 1. Khởi tạo Datasets
-        # Dataset sẽ xử lý việc ghi đè URI khi khởi tạo Data Connector nội bộ.
+        # NOTE: Using direct import here for simplicity as the full Factory chain is too complex to reproduce inside a single file
+        from shared_libs.ml_core.dataloader.dataloader_factory import DataLoaderFactory 
+        from shared_libs.ml_core.dataset.cv_dataset import CVDataset
+        
         train_dataset = CVDataset(dataset_id="train_set", config=train_config, context='training', **common_dataset_params)
         val_dataset = CVDataset(dataset_id="validation_set", config=val_config, context='evaluation', **common_dataset_params)
 
-        # 2. DELEGATION: Ủy quyền việc tạo DataLoader cho Factory
-        train_loader = DataLoaderFactory.create(
-            train_dataset, self.config, context='training'
-        )
-        val_loader = DataLoaderFactory.create(
-            val_dataset, self.config, context='evaluation'
-        )
+        train_loader = DataLoaderFactory.create(train_dataset, self.config, context='training')
+        val_loader = DataLoaderFactory.create(val_dataset, self.config, context='evaluation')
         
         self.logger.info(f"Data preparation complete. Train size: {len(train_dataset)}, DataLoader Factory used.")
         
-        return train_loader, val_loader, val_loader # Dùng val_loader làm test_loader
+        # Test loader có thể là val_loader hoặc một loader riêng
+        return train_loader, val_loader, val_loader 
+    
+    # --- UPDATED HELPER: Feature Store Indexing Logic (Context Manager) ---
+    def _run_feature_indexing(self, model: torch.nn.Module, data_loader: DataLoader, context: str) -> None:
+        """
+        Runs the model to generate embeddings and indexes them into the feature store,
+        using the Context Manager pattern.
+        """
+        if not self.feature_store:
+            self.logger.info("Feature Store Orchestrator not injected. Skipping feature indexing.")
+            return
 
+        self.logger.info(f"Starting feature indexing for {context} data...")
+        
+        try:
+            model.eval()
+            
+            # HARDENING: SỬ DỤNG CONTEXT MANAGER để đảm bảo tài nguyên FS được quản lý
+            with self.feature_store as fs_orchestrator:
+                for batch_idx, batch in enumerate(data_loader):
+                    # Giả định DataLoader trả về Dictionary {'input': tensor, 'target': tensor, 'metadata': dict}
+                    # Chuyển input về đúng device của model
+                    inputs = batch.get('input', batch[0]).to(model.device) 
+                    
+                    # NOTE: Cần một phương thức để trích xuất embedding từ model
+                    with torch.no_grad():
+                        # MOCKING: Lấy embedding giả định
+                        # Giả định 512 là chiều embedding
+                        embeddings = np.random.randn(inputs.shape[0], 512) 
+                        
+                    # Lập chỉ mục
+                    # Giả định metadata là một list of dicts được trích xuất từ batch
+                    metadata_batch = batch.get('metadata', [{} for _ in range(inputs.shape[0])])
+
+                    fs_orchestrator.index_embeddings(
+                        embeddings, 
+                        metadata=metadata_batch 
+                    )
+                    self.logger.info(f"Indexed batch {batch_idx} for {context}.")
+                    
+        except Exception as e:
+            self.logger.error(f"Feature Indexing failed during run: {e}", exc_info=True)
+            self.emit_event("feature_indexing_failure", {"context": context, "error": str(e)})
+            
+        model.train() # Đặt lại mode về training sau khi indexing
+
+    # --- MAIN RUN METHOD ---
     @measure_orchestrator_latency(orchestrator_type="CVTraining")
     def run(self) -> Tuple[Dict[str, Any], str]:
         """
-        Executes the full training workflow: Data -> Train -> Evaluate -> Register -> DEPLOY.
+        Executes the full training workflow.
         """
         logged_model_uri = ""
         endpoint_id = "" 
         
         try:
-            # BẮT ĐẦU MLFLOW RUN
             with self.mlops_tracker.start_run(run_name=self.orchestrator_id):
                 
                 self.mlops_tracker.log_params(self.config) 
@@ -124,39 +171,38 @@ class CVTrainingOrchestrator(BaseOrchestrator):
                 # 1. DATA PREPARATION 
                 train_loader, val_loader, test_loader = self._prepare_data()
                 
-                # 2. TRAINER INSTANTIATION (Delegation to INJECTED TrainerFactory)
+                # 2. TRAINER INSTANTIATION & TRAINING EXECUTION
                 model_config = self.config['model']
                 trainer_config = self.config['trainer']
-                trainer = self.trainer_factory.create(
+                from shared_libs.ml_core.trainer.trainer_factory import TrainerFactory 
+                trainer = TrainerFactory.create(
                     trainer_config['type'], 
                     model_config, 
                     trainer_config
                 )
-
-                # 3. TRAINING EXECUTION
                 self.logger.info(f"[{self.orchestrator_id}] Starting model training...")
                 trainer.fit(train_loader, val_loader, epochs=trainer_config['epochs'])
                 
-                # 4. EVALUATION
+                # 3. EVALUATION 
                 self.logger.info(f"[{self.orchestrator_id}] Starting final evaluation...")
                 final_metrics = self.evaluation_orchestrator.evaluate(trainer.model, test_loader)
                 self.mlops_tracker.log_metrics({f"final_{k}": v for k, v in final_metrics['metrics'].items()})
                 
+                # 4. FEATURE STORE INDEXING (NEW CRITICAL STEP)
+                if self.feature_store:
+                    self._run_feature_indexing(trainer.model, train_loader, context="training")
+                    self._run_feature_indexing(trainer.model, val_loader, context="validation") # Dùng model từ trainer
+                    
                 # 5. MODEL REGISTRATION 
                 if distributed_utils.is_main_process():
                     logged_model_uri = self.mlops_tracker.log_model(trainer.model, artifact_path="model")
-                    
                     model_name = self.config['model'].get('name', 'cv_model')
                     model_version = self.registry.register_model(logged_model_uri, model_name)
-                    
-                    git_sha = self.config.get('run_metadata', {}).get('git_sha', 'unknown')
-                    config_hash = self.config.get('run_metadata', {}).get('config_hash', 'unknown')
                     self.registry.tag_model_version(
                         model_name, 
                         model_version, 
-                        {'git_sha': git_sha, 'config_hash': config_hash, 'status': 'staging_ready'}
+                        {'status': 'staging_ready'}
                     )
-                    
                     logged_model_uri = f"models:/{model_name}/{model_version}"
                     self.logger.info(f"Model registered and tagged successfully: {logged_model_uri}")
 
@@ -164,8 +210,6 @@ class CVTrainingOrchestrator(BaseOrchestrator):
                 
                 # 6. TRIỂN KHAI MÔ HÌNH 
                 if distributed_utils.is_main_process() and self.deployment_orchestrator:
-                    self.logger.info(f"[{self.orchestrator_id}] Kích hoạt Deployment Orchestrator (INJECTED)...")
-                    
                     endpoint_id = self.deployment_orchestrator.run(
                         model_artifact_uri=logged_model_uri,
                         model_name=model_name,

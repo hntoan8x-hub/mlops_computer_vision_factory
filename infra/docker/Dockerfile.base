@@ -1,0 +1,43 @@
+# ----------------------------
+# 🔹 STAGE 1: Cài đặt dependencies (Build Stage)
+# ----------------------------
+FROM python:3.10 as dependency_builder
+
+# Cài đặt các công cụ build C/C++ cần thiết
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc g++ git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+# Giả định requirements/full.txt chứa TẤT CẢ thư viện (Trainer/Inference/Monitor)
+COPY requirements/full.txt .
+RUN pip install --no-cache-dir -r full.txt
+
+
+# ----------------------------
+# 🔹 STAGE 2: Base Runtime Image (Kế thừa cho các Role)
+# ----------------------------
+FROM python:3.10-slim AS hardened_base
+
+# 1️⃣ Tối ưu môi trường
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    LANG=C.UTF-8 \
+    TZ=Asia/Ho_Chi_Minh
+
+# 2️⃣ Tạo non-root user (Hardening)
+RUN useradd -m appuser
+WORKDIR /app
+USER appuser
+
+# 3️⃣ Copy code và libs chung (Chỉ là CODE, không phải Python packages)
+COPY --chown=appuser:appuser shared_libs /app/shared_libs
+COPY --chown=appuser:appuser configs /app/configs
+COPY --chown=appuser:appuser scripts /app/scripts
+
+# 4️⃣ Thiết lập PATH (để chạy script dễ dàng)
+ENV PATH="/app/scripts:$PATH"
+# Thiết lập Python Path
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# Hardened Base Image: Sẵn sàng cho các Role Image kế thừa

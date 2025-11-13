@@ -1,0 +1,212 @@
+# 📘 CV Factory – End-to-End Operational Blueprint
+
+## 🎯 Objective
+This document details the **full operational flow** of a Computer Vision production system (e.g., SADS – Surface Anomaly Detection System). It follows the data lifecycle from **video capture → AI model inference → decision execution → feedback learning**.
+
+---
+
+## ⚙️ I. Data Capture & Ingestion
+### 🎥 Step 1: Video Stream Input
+- Industrial camera streams 60 FPS video.
+- Each frame contains one or more products.
+
+### ⚙️ Step 2: VideoProcessingOrchestrator
+Responsible for converting video to a list of processed image frames.
+
+```
+VideoProcessingOrchestrator
+ ├── BaseVideoSampler          → Select key frames
+ ├── BaseVideoCleaner          → Remove noise, stabilize lighting
+ ├── VideoFrameResizer         → Standardize frame dimensions
+ └── Output: List[Frames]
+```
+**Result:** 4D video tensor → List of 3D image tensors.
+
+---
+
+## 🧩 II. Image Preprocessing & Augmentation
+### 🧼 Step 3: ImageProcessingOrchestrator
+Cleans, normalizes, and augments frames before modeling.
+
+```
+ImageProcessingOrchestrator
+ ├── CleanerFactory → ResizeCleaner, NormalizationCleaner
+ ├── AugmenterFactory → FlipRotate, CutMix, MixUp, NoiseInjection
+ ├── FeatureExtractorFactory → HOG, ORB, CNNFeatureExtractor
+ └── Output: Normalized Tensor (3x224x224)
+```
+
+**Outcome:** Ready-to-train / ready-to-infer tensors.
+
+---
+
+## 🧠 III. Feature Extraction & Embedding
+Transforms visual data into structured numerical representations.
+
+| Component | Purpose | Example |
+|------------|----------|----------|
+| FeatureExtractor | Extract spatial features (local patterns) | CNN / HOG / ORB |
+| Embedder | Generate semantic embeddings | ViT / CLIP / AutoEncoder |
+
+**Result:**
+```
+Image Tensor (3x224x224) → Embedding Vector (1x1024)
+```
+
+---
+
+## 🧮 IV. Training Pipeline
+### 🧱 Step 4: Trainer Orchestrator
+Handles model learning and lifecycle management.
+
+```
+Trainer Orchestrator (cnn_trainer.py / depth_trainer.py)
+ ├── DataLoader → Train / Val / Test sets
+ ├── Optimizer → AdamW, SGD
+ ├── Scheduler → LR Warmup, CosineDecay
+ ├── Loss Functions → CrossEntropy, L1, SSIM
+ ├── DDP Handling → BaseDistributedTrainer
+ ├── Checkpoint & Logging → MLflow Tracker
+ └── Output: Trained Model (artifact.pt)
+```
+
+**Outcome:** Saved model artifact, e.g., `sads_resnet50_v1.pt`
+
+---
+
+## 📊 V. Evaluation & Output Adapter
+### 🧩 Step 5: EvaluationOrchestrator
+Calculates model performance metrics.
+
+| Task | Key Metrics |
+|------|--------------|
+| Classification | Accuracy, Precision, Recall |
+| Detection | mAP, IoU |
+| Depth Estimation | RMSE, AbsRel, δ₁, δ₂ |
+
+### 🔄 Step 6: OutputAdapter
+Standardizes raw model outputs for downstream use.
+
+```
+Raw Model Output (logits/tensors)
+   ↓
+OutputAdapter
+   ↓
+[
+  {"bbox": [x_min, y_min, x_max, y_max], "score": 0.92, "class": "scratch"},
+  {"bbox": [x_min, y_min, x_max, y_max], "score": 0.88, "class": "hole"}
+]
+```
+
+---
+
+## ☁️ VI. Model Registry & Deployment
+### 🚀 Step 7: Model Registration (MLflow)
+- Registers model + metadata + version.
+- Example entry:
+  ```
+  Model: SADS_ResNet50
+  Version: v2.1
+  Metrics: mAP=0.86, IoU=0.78
+  ```
+
+### 🧭 Step 8: Deployment Orchestrator
+Automates serving environment rollout.
+
+```
+DeploymentOrchestrator
+ ├── deploy_standard.py → Standard deployment (full rollout)
+ ├── run_canary_rollout.py → Gradual traffic shift (5% → 100%)
+ ├── rollback_deployment.py → Rollback to stable version
+ └── Output: Serving Endpoint (API)
+```
+
+**Result:** API Endpoint: `https://cv-factory/api/v1/sads/inference`
+
+---
+
+## ⚡ VII. Decision Engine & Feedback Loop
+### 🤖 Step 9: Decision Engine
+Integrates AI inference into physical control and quality loops.
+
+```
+DecisionEngine
+ ├── Read OutputAdapter results
+ ├── Apply confidence thresholds
+ ├── If defect detected → send signal to PLC (Reject Product)
+ ├── Else → QC Logger marks product as PASS
+ └── All results logged to database
+```
+
+### 🔁 Step 10: Feedback & Continuous Learning
+Integrates drift detection and auto-retraining.
+
+```
+monitor_and_trigger.py
+ ├── Detect performance drift via Prometheus metrics
+ ├── If drift > threshold → trigger Airflow retraining DAG
+ └── New model registered + deployed automatically
+```
+
+---
+
+## 📘 VIII. End-to-End Data Flow Diagram
+
+```
+Video Stream
+   ↓
+VideoProcessingOrchestrator
+   ↓
+ImageProcessingOrchestrator
+   ↓
+FeatureExtractor / Embedder
+   ↓
+Trainer (Learning Loop)
+   ↓
+EvaluationOrchestrator + OutputAdapter
+   ↓
+Model Registry + Deployment
+   ↓
+Decision Engine (AI → Physical Action)
+   ↓
+Feedback Collector → Retraining
+```
+
+---
+
+## 🧱 IX. Final System Deliverables
+| Output Artifact | Description | Generated By |
+|-----------------|--------------|---------------|
+| `sads_model.pt` | Trained CNN model | Trainer |
+| `evaluation_report.json` | Performance metrics | EvaluationOrchestrator |
+| `mlflow registry entry` | Model + metadata | MLflowLogger |
+| `serving endpoint` | Inference REST API | DeploymentOrchestrator |
+| `plc_signal` | Command for mechanical reject system | DecisionEngine |
+| `feedback dataset` | Data for retraining | Monitoring Layer |
+
+---
+
+## 🧭 X. System Summary (Text Diagram Overview)
+
+```
+Camera (Video Input)
+   ↓
+VideoProcessingOrchestrator → Frame Sampler / Cleaner / Resizer
+   ↓
+ImageProcessingOrchestrator → Augmenter / Normalizer / FeatureExtractor
+   ↓
+Trainer → Model Training / Evaluation / Registry
+   ↓
+DeploymentOrchestrator → Serve Model via API Endpoint
+   ↓
+DecisionEngine → PLC Signal / QC Dashboard / Feedback Loop
+   ↓
+Monitoring → Auto Retraining → New Version Deployment
+```
+
+---
+
+✅ **Conclusion:**  
+Your CV Factory system is no longer just a training pipeline — it’s a **fully hardened AI Production Ecosystem**.  
+It can process real-time video, infer surface defects, take autonomous actions, and continuously improve over time.
+

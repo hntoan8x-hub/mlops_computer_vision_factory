@@ -1,0 +1,10 @@
+vector_db_config.yaml
+Configuration for a vector database (e.g., Milvus or Chroma)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+name: vector-db-config
+data:
+DB_HOST: "milvus-service"
+DB_PORT: "19530"
+COLLECTION_NAME: "assistant_embeddings"

@@ -1,0 +1,31 @@
+---
+# manifest/1_config/01_configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cv-factory-configs
+  namespace: mlops-cv-factory
+data:
+  # Cấu hình MLOps Service Endpoint
+  MLFLOW_TRACKING_URI: "http://mlflow-service.mlops-cv-factory.svc.cluster.local"
+  FEATURE_STORE_URL: "http://vector-db.mlops-cv-factory.svc.cluster.local:8080"
+
+  # Cấu hình Traffic Controller API (Istio/Router)
+  DEPLOYMENT_CONTROLLER_API_URL: "http://istio-gateway.istio-system/api"
+
+  # Tham số cấu hình chung cho các Orchestrator
+  MODEL_NAME: "defect_detector"
+  DEFAULT_DEPLOYMENT_CONFIG_PATH: "/app/configs/deployment/deployment_config.json"
+---
+# manifest/1_config/02_secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cv-factory-secrets
+  namespace: mlops-cv-factory
+type: Opaque
+data:
+  # Các Secret quan trọng (encoded Base64)
+  MLFLOW_TRACKING_TOKEN: <base64_encoded_token>
+  SLACK_WEBHOOK_URL: <base64_encoded_slack_webhook>
+  FS_DB_PASSWORD: <base64_encoded_db_password>

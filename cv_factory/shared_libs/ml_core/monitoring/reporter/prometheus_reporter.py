@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 from shared_libs.ml_core.monitoring.base.base_reporter import BaseReporter
+from shared_libs.infra.monitoring.base_event_emitter import BaseEventEmitter # Import for Type Hint
 
 logger = logging.getLogger(__name__)
 
@@ -9,13 +10,14 @@ class PrometheusReporter(BaseReporter):
     """
     A concrete reporter that pushes metrics to a Prometheus Pushgateway.
     """
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], emitter: Optional[BaseEventEmitter] = None):
         self.gateway_url = config.get("gateway_url")
         self.job_name = config.get("job_name", "model_monitor")
         if not self.gateway_url:
             raise ValueError("Prometheus gateway URL must be provided.")
         self.registry = CollectorRegistry()
         self.metrics = {}
+        self.emitter = emitter # NEW: Store emitter
         logger.info(f"PrometheusReporter initialized for gateway: {self.gateway_url}")
 
     def report(self, report_name: str, report_data: Dict[str, Any], **kwargs: Dict[str, Any]) -> None:

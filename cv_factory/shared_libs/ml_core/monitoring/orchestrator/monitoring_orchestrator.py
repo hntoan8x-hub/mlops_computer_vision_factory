@@ -13,31 +13,26 @@ from shared_libs.core_utils.exceptions import ConfigurationError, PersistenceErr
 
 # Import specific Reporter classes for type checking (isinstance and issubclass)
 from shared_libs.ml_core.monitoring.reporters.alert_reporter import AlertReporter
-# NOTE: Cần import các lớp cụ thể khác nếu chúng có xử lý đặc biệt
-# from shared_libs.ml_core.monitoring.reporters.prometheus_reporter import PrometheusReporter 
+# Import Contract mới
+from shared_libs.infra.monitoring.base_event_emitter import BaseEventEmitter 
 
 logger = logging.getLogger(__name__)
 
 class MonitoringOrchestrator:
     """
     The master orchestrator for the MLOps monitoring pipeline.
-    
-    This class loads configured monitors and reporters dynamically, executes the checks, 
-    and dispatches reports/alerts based on the outcomes, centralizing control over the 
-    check-alert-report lifecycle.
     """
     
-    def __init__(self, config: Dict[str, Any]):
-        """
-        Initializes the orchestrator by loading configuration and dynamically instantiating 
-        all Monitors and Reporters.
-        """
+    # Thêm Dependency Injection cho EventEmitter
+    def __init__(self, config: Dict[str, Any], event_emitter: BaseEventEmitter):
+        
         # 1. Validate and parse configuration
         try:
             self.validated_config = MonitoringConfig(**config)
         except Exception as e:
             raise ConfigurationError(f"Monitoring configuration validation failed: {e}") from e
             
+        self.emitter = event_emitter # NEW: Store injected emitter
         self.monitors: List[BaseMonitor] = self._instantiate_monitors()
         self.reporters: List[BaseReporter] = self._instantiate_reporters()
         
@@ -75,7 +70,7 @@ class MonitoringOrchestrator:
         return monitors
 
     def _instantiate_reporters(self) -> List[BaseReporter]:
-        """Instantiates all reporters from the configuration dynamically."""
+        """Instantiates all reporters from the configuration dynamically and injects the Emitter."""
         reporters = []
         
         for reporter_config in self.validated_config.reporters:
@@ -89,7 +84,13 @@ class MonitoringOrchestrator:
                     # AlertReporter needs the global alert configuration
                     params = self.validated_config.alerts.dict()
                 
-                reporters.append(ReporterCls(params))
+                # NEW: Thêm Emitter vào kwargs nếu Reporter chấp nhận nó
+                kwargs = {}
+                # Dùng introspect để kiểm tra nếu init method có parameter 'emitter'
+                if 'emitter' in ReporterCls.__init__.__code__.co_varnames:
+                     kwargs['emitter'] = self.emitter
+                
+                reporters.append(ReporterCls(params, **kwargs)) # CẬP NHẬT THÊM KWARGS
             except Exception as e:
                 logger.error(f"Failed to instantiate reporter '{reporter_config.type}': {e}")
                 continue
@@ -98,13 +99,6 @@ class MonitoringOrchestrator:
     def run_check(self, reference_data: Any, current_data: Any, **kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Executes all active monitors and dispatches reports/alerts based on outcomes.
-        
-        Args:
-            reference_data: The baseline data for comparison.
-            current_data: The current operational data (features, predictions, metrics).
-        
-        Returns:
-            List[Dict[str, Any]]: A list of full monitor reports.
         """
         full_report: List[Dict[str, Any]] = []
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')

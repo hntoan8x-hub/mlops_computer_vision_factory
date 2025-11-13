@@ -1,0 +1,6 @@
+loki-config.yaml
+A simple Loki configuration file for log storage.
+auth_enabled: false
+
+server:
+http_listen_port: 3100

@@ -1,0 +1,46 @@
+# deployment_rollback.yaml
+# Cấu hình cho rollback_deployment.py và deploy_standard.py
+
+pipeline:
+  type: deployment # Kích hoạt CVDeploymentOrchestrator
+
+# ===============================================
+# 1. MLOPS CONFIG (Cần cho Logging và Registry Lookup)
+# ===============================================
+mlflow:
+  tracking_uri: "http://mlflow-server.svc.local:5000"
+  # Chỉ cần config tối thiểu để khởi tạo Tracker/Registry Contracts
+  tracker:
+    type: "mlflow"
+    params: {}
+    mlflow:
+      module_path: "shared_libs.ml_core.mlflow_service.implementations.mlflow_logger"
+      class_name: "MLflowLogger"
+  registry:
+    type: "mlflow"
+    params: {}
+    mlflow:
+      module_path: "shared_libs.ml_core.mlflow_service.implementations.mlflow_registry"
+      class_name: "MLflowRegistry"
+
+# ===============================================
+# 2. DEPLOYMENT CORE CONFIG
+# ===============================================
+deployment:
+  enabled: true
+  platform: "kubernetes"
+  endpoint_name: "prod-defect-detector"
+
+  # Cấu hình chung cho DeployerFactory
+  config:
+    image_uri: "docker-registry/cv-prod-inf:latest"
+    instance_type: "t2.medium"
+    min_replicas: 2
+
+    # Cấu hình cho TrafficControllerFactory (Istio)
+    traffic_controller:
+      enabled: true
+      type: "istio"
+      params:
+        gateway_name: "cv-gateway"
+        service_name: "prod-defect-detector"

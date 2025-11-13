@@ -1,0 +1,24 @@
+cron_retrain.yaml
+A Kubernetes CronJob to automatically trigger the trainer job on a schedule.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+name: genai-trainer-cronjob
+spec:
+schedule: "0 2 * * *" # Run at 2:00 AM every day
+jobTemplate:
+spec:
+template:
+spec:
+containers:
+- name: trainer
+image: your-docker-registry/genai-trainer:latest
+resources:
+limits:
+https://www.google.com/search?q=nvidia.com/gpu: 1
+requests:
+https://www.google.com/search?q=nvidia.com/gpu: 1
+envFrom:
+- secretRef:
+name: api-keys-secret
+restartPolicy: OnFailure

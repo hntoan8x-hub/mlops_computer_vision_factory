@@ -1,0 +1,31 @@
+---
+# manifest/4_jobs/01_tmr_cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tmr-check-job
+  namespace: mlops-cv-factory
+spec:
+  schedule: "0 6 * * *" # Chạy hàng ngày lúc 6:00 sáng
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: appuser-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: tmr-checker
+              image: your-registry/cv-factory:etl-v1.0 # Sử dụng ETL Role Image
+              # ENTRYPOINT của ETL Role đã được Hardening thành scripts/run_retrain_check.py
+              args: ["--config", "/app/configs/monitoring/tmr_config.json"]
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "1Gi"
+              envFrom:
+                - configMapRef:
+                    name: cv-factory-configs
+                - secretRef:
+                    name: cv-factory-secrets
